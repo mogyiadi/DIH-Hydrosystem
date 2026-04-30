@@ -143,65 +143,71 @@ class DIHRobot:
 
         self.set_target(1, target_1_qms)
         self.set_target(2, target_2_qms)
-        time.sleep(SERVO_MOVE_WAIT)
+        # Give enough time for large aiming movements
+        time.sleep(1.5)
 
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        # A 360-degree sweep with more frequent stops to avoid skipping over plants
-        pan_steps = [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000]
+        # Sweep forward and backward
+        forward_steps = list(range(2000, 7001, 100))
+        pan_steps = forward_steps + forward_steps[-2:0:-1]
 
-        for pan_pos in pan_steps:
-            print(f"\n--- Scanning at pan position {pan_pos} ---")
-            self.set_target(1, pan_pos)
-            self.set_target(2, 6200)  # Ensure tilt is level for the scan
-            self.current_pan = pan_pos
-            time.sleep(SERVO_MOVE_WAIT)
+        while True:
+            for pan_pos in pan_steps:
+                print(f"\n--- Scanning at pan position {pan_pos} ---")
+                self.set_target(1, pan_pos)
+                self.set_target(2, 6200)  # Ensure tilt is level for the scan
+                self.current_pan = pan_pos
+                
+                time.sleep(0.1)
 
-            image = self.capture_image()
-            cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                image = self.capture_image()
+                cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-            image_width = image.size[0]
-            image_height = image.size[1]
+                image_width = image.size[0]
+                image_height = image.size[1]
 
-            pots = self.detect_pots(image)
-            if not pots:
-                print("No plants detected — going back to sleep.")
+                pots = self.detect_pots(image)
+                if not pots:
+                    print("No plants detected — moving on.")
+                    cv2.imshow("Live Feed", cv_img)
+                    cv2.waitKey(1)
+                else:
+                    print(f"Detected {len(pots)} pot(s).")
+                    for i, pot in enumerate(pots):
+                        x1, y1, x2, y2 = pot["bbox"]
+                        cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        print(f"\n[Plant {i + 1}/{len(pots)}]")
+
+                        crop = image.crop((x1, y1, x2, y2))
+                        name, conf = self.identify_plant(crop)
+                        print(f"  Species: {name} ({conf * 100:.1f}%)")
+
+                        if conf < 0.2:
+                            print("  Confidence too low (<20%) — skipping.")
+                            cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                            continue
+
+                        cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                        if self.needs_water(crop, name):
+                            self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+                            # No water logic for now since pump is disconnected
+                            print("  *Pretending to water*")
+                            time.sleep(2.0)
+
+                            print("  Returning to scan position for next plant...")
+                            self.set_target(1, self.current_pan)
+                            self.set_target(2, 6200)
+                            time.sleep(1.5)
+                        else:
+                            print("  Doesn't need water — skipping.")
+
                 cv2.imshow("Live Feed", cv_img)
                 cv2.waitKey(1)
-            else:
-                print(f"Detected {len(pots)} pot(s).")
-                for i, pot in enumerate(pots):
-                    x1, y1, x2, y2 = pot["bbox"]
-                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    print(f"\n[Plant {i + 1}/{len(pots)}]")
 
-                    crop = image.crop((x1, y1, x2, y2))
-                    name, conf = self.identify_plant(crop)
-                    print(f"  Species: {name} ({conf * 100:.1f}%)")
-
-                    if conf < 0.2:
-                        print("  Confidence too low (<50%) — skipping.")
-                        cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                        continue
-
-                    cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-                    if self.needs_water(crop, name):
-                        self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
-                        # No water logic for now since pump is disconnected
-                        print("  *Pretending to water*")
-                        time.sleep(2.0)
-
-                        print("  Returning to scan position for next plant...")
-                        self.set_target(1, self.current_pan)
-                        self.set_target(2, 6200)
-                        time.sleep(SERVO_MOVE_WAIT)
-                    else:
-                        print("  Doesn't need water — skipping.")
-
-                cv2.imshow("Live Feed", cv_img)
-                cv2.waitKey(1)
+        # The loop runs indefinitely until KeyboardInterrupt
 
         print("\nResetting arm to homed position.")
         self.set_target(0, 7000)
