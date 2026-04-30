@@ -79,7 +79,8 @@ class DIHRobot:
         if frame.shape[-1] == 4:
             frame = frame[:, :, :3]
 
-        return Image.fromarray(frame)
+        # Camera is mounted upside down
+        return Image.fromarray(frame).rotate(180)
 
     def detect_pots(self, image):
         """Model A — returns list of dicts with bbox and center_x, sorted left→right."""
@@ -129,14 +130,13 @@ class DIHRobot:
 
         print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
 
-        # Map degrees to Maestro target (1 degree ~22.2 qms)
-        # Default centers: Servo 1 = 6000, Servo 2 = 6200
-        target_1_qms = self.current_pan + int(angle_x * 22.22)
+        # Map degrees to Maestro target
+        target_1_qms = self.current_pan + int(angle_x * 44.44) # increased multiplier just in case
         target_2_qms = 6200 + int(angle_y * 22.22)
 
-        # Apply hard safety limits to prevent the servos from over-rotating
-        target_1_qms = max(2000, min(10000, target_1_qms))
-        target_2_qms = max(2000, min(10000, target_2_qms))
+        # Apply hard safety limits to prevent the servos from over-rotating. 
+        target_1_qms = max(0, min(16000, target_1_qms))
+        target_2_qms = max(0, min(16000, target_2_qms))
 
         print(f"  Sending Pan  (Servo 1) to {target_1_qms}")
         print(f"  Sending Tilt (Servo 2) to {target_2_qms}")
@@ -148,7 +148,8 @@ class DIHRobot:
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        pan_steps = [2000, 4000, 6000, 8000, 10000]
+        # A 360-degree sweep assuming a wide capability servo (depends on hardware limits)
+        pan_steps = [2000, 4000, 6000, 8000, 10000, 12000, 14000]
 
         for pan_pos in pan_steps:
             print(f"\n--- Scanning at pan position {pan_pos} ---")
