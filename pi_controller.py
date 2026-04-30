@@ -30,7 +30,7 @@ DEDUP_THRESHOLD = 600
 
 # Vertical position for arm base (Servo 0) and top tilt (Servo 2)
 SERVO_0_VERTICAL_POS = 8000
-SERVO_2_VERTICAL_POS = 10000
+SERVO_2_VERTICAL_POS = 4000
 
 
 class DIHRobot:
