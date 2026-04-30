@@ -29,7 +29,7 @@ CLASS_NAMES_PATH= "class_names.txt"
 DEDUP_THRESHOLD = 600
 
 # Vertical position for arm base (Servo 0) and top tilt (Servo 2)
-ARM_VERTICAL_POS = 4000
+ARM_VERTICAL_POS = 8000
 
 
 class DIHRobot:
