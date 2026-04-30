@@ -1,13 +1,9 @@
-import sys
-sys.path.append('/usr/lib/python3/dist-packages')
-
 import time
 import serial
 import numpy as np
 import cv2
 from PIL import Image
 from ultralytics import YOLO
-from picamera2 import Picamera2
 
 try:
     from tflite_runtime.interpreter import Interpreter
