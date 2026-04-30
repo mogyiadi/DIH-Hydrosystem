@@ -32,6 +32,10 @@ DEDUP_THRESHOLD = 600
 SERVO_0_VERTICAL_POS = 8000
 SERVO_2_VERTICAL_POS = 4000
 
+# Bow position for watering (Hose points forward/down)
+SERVO_0_BOW_POS = 5000
+SERVO_2_BOW_POS = 8000
+
 
 class DIHRobot:
 
@@ -295,6 +299,11 @@ class DIHRobot:
                         if self.needs_water(crop, name):
                             recent_plants.append((self.current_pan, time.time()))
 
+                            print("  Bowing down to water...")
+                            self.set_target(0, SERVO_0_BOW_POS)
+                            self.set_target(2, SERVO_2_BOW_POS)
+                            time.sleep(1.5)
+
                             print("  *Pretending to water*")
                             for _ in range(100):
                                 w_img = self.capture_image()
@@ -302,6 +311,9 @@ class DIHRobot:
                                 cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
                                 cv2.imshow("Live Feed", cv_w_img)
                                 cv2.waitKey(100)
+
+                            print("  Returning to upright position...")
+                            self.set_target(0, SERVO_0_VERTICAL_POS)
 
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
