@@ -148,8 +148,8 @@ class DIHRobot:
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        # A 360-degree sweep assuming a wide capability servo (depends on hardware limits)
-        pan_steps = [2000, 4000, 6000, 8000, 10000, 12000, 14000]
+        # A 360-degree sweep with more frequent stops to avoid skipping over plants
+        pan_steps = [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000]
 
         for pan_pos in pan_steps:
             print(f"\n--- Scanning at pan position {pan_pos} ---")
@@ -179,6 +179,11 @@ class DIHRobot:
                     crop = image.crop((x1, y1, x2, y2))
                     name, conf = self.identify_plant(crop)
                     print(f"  Species: {name} ({conf * 100:.1f}%)")
+
+                    if conf < 0.5:
+                        print("  Confidence too low (<50%) — skipping.")
+                        cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                        continue
 
                     cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
