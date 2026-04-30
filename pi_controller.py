@@ -32,6 +32,7 @@ class DIHRobot:
             self.set_target(0, 7000)
             self.set_target(1, 6000)
             self.set_target(2, 6200)
+            self.current_pan = 6000
             time.sleep(1)
         except Exception as e:
             print(f"Could not connect to serial port. Error: {e}")
@@ -127,7 +128,7 @@ class DIHRobot:
 
         # Map degrees to Maestro target (1 degree ~22.2 qms)
         # Default centers: Servo 1 = 6000, Servo 2 = 6200
-        target_1_qms = 6000 + int(angle_x * 22.22)
+        target_1_qms = self.current_pan + int(angle_x * 22.22)
         target_2_qms = 6200 + int(angle_y * 22.22)
 
         # Apply hard safety limits to prevent the servos from over-rotating
@@ -144,30 +145,44 @@ class DIHRobot:
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        image = self.capture_image()
-        image_width = image.size[0]
-        image_height = image.size[1]
+        pan_steps = [4000, 5000, 6000, 7000, 8000]
 
-        pots = self.detect_pots(image)
-        if not pots:
-            print("No plants detected — going back to sleep.")
-        else:
-            print(f"Detected {len(pots)} pot(s).")
-            for i, pot in enumerate(pots):
-                x1, y1, x2, y2 = pot["bbox"]
-                print(f"\n[Plant {i + 1}/{len(pots)}]")
+        for pan_pos in pan_steps:
+            print(f"\n--- Scanning at pan position {pan_pos} ---")
+            self.set_target(1, pan_pos)
+            self.set_target(2, 6200)  # Ensure tilt is level for the scan
+            self.current_pan = pan_pos
+            time.sleep(SERVO_MOVE_WAIT)
 
-                crop = image.crop((x1, y1, x2, y2))
-                name, conf = self.identify_plant(crop)
-                print(f"  Species: {name} ({conf * 100:.1f}%)")
+            image = self.capture_image()
+            image_width = image.size[0]
+            image_height = image.size[1]
 
-                if self.needs_water(crop, name):
-                    self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
-                    # No water logic for now since pump is disconnected
-                    print("  *Pretending to water*")
-                    time.sleep(2.0)
-                else:
-                    print("  Doesn't need water — skipping.")
+            pots = self.detect_pots(image)
+            if not pots:
+                print("No plants detected — going back to sleep.")
+            else:
+                print(f"Detected {len(pots)} pot(s).")
+                for i, pot in enumerate(pots):
+                    x1, y1, x2, y2 = pot["bbox"]
+                    print(f"\n[Plant {i + 1}/{len(pots)}]")
+
+                    crop = image.crop((x1, y1, x2, y2))
+                    name, conf = self.identify_plant(crop)
+                    print(f"  Species: {name} ({conf * 100:.1f}%)")
+
+                    if self.needs_water(crop, name):
+                        self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+                        # No water logic for now since pump is disconnected
+                        print("  *Pretending to water*")
+                        time.sleep(2.0)
+
+                        print("  Returning to scan position for next plant...")
+                        self.set_target(1, self.current_pan)
+                        self.set_target(2, 6200)
+                        time.sleep(SERVO_MOVE_WAIT)
+                    else:
+                        print("  Doesn't need water — skipping.")
 
         print("\nResetting arm to homed position.")
         self.set_target(0, 7000)
