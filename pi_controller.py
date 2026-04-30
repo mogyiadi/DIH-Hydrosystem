@@ -29,7 +29,8 @@ CLASS_NAMES_PATH= "class_names.txt"
 DEDUP_THRESHOLD = 600
 
 # Vertical position for arm base (Servo 0) and top tilt (Servo 2)
-ARM_VERTICAL_POS = 8000
+SERVO_0_VERTICAL_POS = 8000
+SERVO_2_VERTICAL_POS = 10000
 
 
 class DIHRobot:
@@ -41,11 +42,11 @@ class DIHRobot:
             print("Connected to controller!")
 
             # Home arm to your default position (vertical)
-            self.set_target(0, ARM_VERTICAL_POS)
+            self.set_target(0, SERVO_0_VERTICAL_POS)
             self.set_target(1, 6000)
-            self.set_target(2, ARM_VERTICAL_POS)
+            self.set_target(2, SERVO_2_VERTICAL_POS)
             self.current_pan = 6000
-            self.current_tilt = ARM_VERTICAL_POS
+            self.current_tilt = SERVO_2_VERTICAL_POS
             time.sleep(1)
         except Exception as e:
             print(f"Could not connect to serial port. Error: {e}")
@@ -210,7 +211,7 @@ class DIHRobot:
             for pan_pos in pan_steps:
                 print(f"\n--- Scanning at pan position {pan_pos} ---")
                 self.set_target(1, pan_pos)
-                self.set_target(2, ARM_VERTICAL_POS)  # Ensure tilt is level for the scan
+                self.set_target(2, SERVO_2_VERTICAL_POS)  # Ensure tilt is level for the scan
                 self.current_pan = pan_pos
 
                 time.sleep(0.1)
@@ -255,9 +256,9 @@ class DIHRobot:
                         if centered_pot is None:
                             print("  Lost plant during aiming.")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, ARM_VERTICAL_POS)
+                            self.set_target(2, SERVO_2_VERTICAL_POS)
                             self.current_pan = pan_pos
-                            self.current_tilt = ARM_VERTICAL_POS
+                            self.current_tilt = SERVO_2_VERTICAL_POS
                             continue
 
                         x1, y1, x2, y2 = centered_pot["bbox"]
@@ -281,9 +282,9 @@ class DIHRobot:
                             # Returning to scan position
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, ARM_VERTICAL_POS)
+                            self.set_target(2, SERVO_2_VERTICAL_POS)
                             self.current_pan = pan_pos
-                            self.current_tilt = ARM_VERTICAL_POS
+                            self.current_tilt = SERVO_2_VERTICAL_POS
                             time.sleep(1.5)
                             continue
 
@@ -304,9 +305,9 @@ class DIHRobot:
 
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, ARM_VERTICAL_POS)
+                            self.set_target(2, SERVO_2_VERTICAL_POS)
                             self.current_pan = pan_pos
-                            self.current_tilt = ARM_VERTICAL_POS
+                            self.current_tilt = SERVO_2_VERTICAL_POS
                             for _ in range(15):
                                 ret_img = self.capture_image()
                                 cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
@@ -320,9 +321,9 @@ class DIHRobot:
                             # Returning to scan position
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, ARM_VERTICAL_POS)
+                            self.set_target(2, SERVO_2_VERTICAL_POS)
                             self.current_pan = pan_pos
-                            self.current_tilt = ARM_VERTICAL_POS
+                            self.current_tilt = SERVO_2_VERTICAL_POS
                             for _ in range(15):
                                 ret_img = self.capture_image()
                                 cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
@@ -333,9 +334,9 @@ class DIHRobot:
         # The loop runs indefinitely until KeyboardInterrupt
 
         print("\nResetting arm to homed position.")
-        self.set_target(0, ARM_VERTICAL_POS)
+        self.set_target(0, SERVO_0_VERTICAL_POS)
         self.set_target(1, 6000)
-        self.set_target(2, ARM_VERTICAL_POS)
+        self.set_target(2, SERVO_2_VERTICAL_POS)
         time.sleep(1.0)
 
         self.cleanup()
