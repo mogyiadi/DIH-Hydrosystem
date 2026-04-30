@@ -176,8 +176,8 @@ class DIHRobot:
 
             for pot in pots:
                 x1, y1, x2, y2 = pot["bbox"]
-                cv2.rectangle(cv_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
+                cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
 
             cv2.imshow("Live Feed", cv_img)
             cv2.waitKey(1)
@@ -222,8 +222,8 @@ class DIHRobot:
                 # Draw all Model A bounding boxes early so we see them immediately
                 for pot in pots:
                     x1, y1, x2, y2 = pot["bbox"]
-                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                    cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
+                    cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
 
                 cv2.imshow("Live Feed", cv_img)
                 cv2.waitKey(1)
