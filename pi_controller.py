@@ -17,7 +17,8 @@ except ImportError:
 
 CAMERA_FOV      = 62.2
 SERVO_MOVE_WAIT = 1.5
-MODEL_A_PATH    = "dih_model_a_results/runs/train2/weights/best.pt"
+# MODEL_A_PATH    = "dih_model_a_results/runs/train2/weights/best.pt"
+MODEL_A_PATH    = "yolo26n.pt"
 MODEL_B_PATH    = "model_b.tflite"
 CLASS_NAMES_PATH= "class_names.txt"
 
