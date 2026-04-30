@@ -15,7 +15,8 @@ except ImportError:
         from tensorflow.lite.python.interpreter import Interpreter
 
 
-CAMERA_FOV      = 62.2
+CAMERA_FOV      = 48.8
+CAMERA_FOV_V    = 62.2
 SERVO_MOVE_WAIT = 1.5
 # MODEL_A_PATH    = "dih_model_a_results/runs/train2/weights/best.pt"
 MODEL_A_PATH    = "yolo26n.pt"
@@ -36,12 +37,12 @@ class DIHRobot:
             self.port = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
             print("Connected to controller!")
 
-            # Home arm to your default position
-            self.set_target(0, 7000)
+            # Home arm to your default position (vertical)
+            self.set_target(0, 6000)
             self.set_target(1, 6000)
-            self.set_target(2, 6200)
+            self.set_target(2, 6000)
             self.current_pan = 6000
-            self.current_tilt = 6200
+            self.current_tilt = 6000
             time.sleep(1)
         except Exception as e:
             print(f"Could not connect to serial port. Error: {e}")
@@ -91,8 +92,9 @@ class DIHRobot:
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Camera is mounted upside down
-        return Image.fromarray(frame).rotate(180)
+        # Camera is rotated 90 degrees to the right (clockwise)
+        # To correct, rotate 90 degrees counter-clockwise (expand=True to swap dimensions)
+        return Image.fromarray(frame).rotate(90, expand=True)
 
     def detect_pots(self, image):
         """Model A — returns list of dicts with bbox and center_x, sorted left→right."""
@@ -143,7 +145,6 @@ class DIHRobot:
             angle_x = normalized_x * CAMERA_FOV
 
             # Vertical / Tilt (Servo 2)
-            CAMERA_FOV_V = 48.8
             normalized_y = (cy / image_height) - 0.5
             angle_y = normalized_y * CAMERA_FOV_V
 
@@ -206,7 +207,7 @@ class DIHRobot:
             for pan_pos in pan_steps:
                 print(f"\n--- Scanning at pan position {pan_pos} ---")
                 self.set_target(1, pan_pos)
-                self.set_target(2, 6200)  # Ensure tilt is level for the scan
+                self.set_target(2, 6000)  # Ensure tilt is level for the scan
                 self.current_pan = pan_pos
 
                 time.sleep(0.1)
@@ -251,9 +252,9 @@ class DIHRobot:
                         if centered_pot is None:
                             print("  Lost plant during aiming.")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, 6200)
+                            self.set_target(2, 6000)
                             self.current_pan = pan_pos
-                            self.current_tilt = 6200
+                            self.current_tilt = 6000
                             continue
 
                         x1, y1, x2, y2 = centered_pot["bbox"]
@@ -277,9 +278,9 @@ class DIHRobot:
                             # Returning to scan position
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, 6200)
+                            self.set_target(2, 6000)
                             self.current_pan = pan_pos
-                            self.current_tilt = 6200
+                            self.current_tilt = 6000
                             time.sleep(1.5)
                             continue
 
@@ -300,9 +301,9 @@ class DIHRobot:
 
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, 6200)
+                            self.set_target(2, 6000)
                             self.current_pan = pan_pos
-                            self.current_tilt = 6200
+                            self.current_tilt = 6000
                             for _ in range(15):
                                 ret_img = self.capture_image()
                                 cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
@@ -316,9 +317,9 @@ class DIHRobot:
                             # Returning to scan position
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
-                            self.set_target(2, 6200)
+                            self.set_target(2, 6000)
                             self.current_pan = pan_pos
-                            self.current_tilt = 6200
+                            self.current_tilt = 6000
                             for _ in range(15):
                                 ret_img = self.capture_image()
                                 cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
@@ -329,9 +330,9 @@ class DIHRobot:
         # The loop runs indefinitely until KeyboardInterrupt
 
         print("\nResetting arm to homed position.")
-        self.set_target(0, 7000)
+        self.set_target(0, 6000)
         self.set_target(1, 6000)
-        self.set_target(2, 6200)
+        self.set_target(2, 6000)
         time.sleep(1.0)
 
         self.cleanup()
