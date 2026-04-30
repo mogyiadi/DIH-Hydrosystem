@@ -135,8 +135,8 @@ class DIHRobot:
         target_2_qms = 6200 + int(angle_y * 22.22)
 
         # Apply hard safety limits to prevent the servos from over-rotating
-        target_1_qms = max(4000, min(8000, target_1_qms))
-        target_2_qms = max(4000, min(8000, target_2_qms))
+        target_1_qms = max(2000, min(10000, target_1_qms))
+        target_2_qms = max(2000, min(10000, target_2_qms))
 
         print(f"  Sending Pan  (Servo 1) to {target_1_qms}")
         print(f"  Sending Tilt (Servo 2) to {target_2_qms}")
@@ -148,7 +148,7 @@ class DIHRobot:
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        pan_steps = [4000, 5000, 6000, 7000, 8000]
+        pan_steps = [2000, 4000, 6000, 8000, 10000]
 
         for pan_pos in pan_steps:
             print(f"\n--- Scanning at pan position {pan_pos} ---")
@@ -158,21 +158,28 @@ class DIHRobot:
             time.sleep(SERVO_MOVE_WAIT)
 
             image = self.capture_image()
+            cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
             image_width = image.size[0]
             image_height = image.size[1]
 
             pots = self.detect_pots(image)
             if not pots:
                 print("No plants detected — going back to sleep.")
+                cv2.imshow("Live Feed", cv_img)
+                cv2.waitKey(1)
             else:
                 print(f"Detected {len(pots)} pot(s).")
                 for i, pot in enumerate(pots):
                     x1, y1, x2, y2 = pot["bbox"]
+                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     print(f"\n[Plant {i + 1}/{len(pots)}]")
 
                     crop = image.crop((x1, y1, x2, y2))
                     name, conf = self.identify_plant(crop)
                     print(f"  Species: {name} ({conf * 100:.1f}%)")
+
+                    cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                     if self.needs_water(crop, name):
                         self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
@@ -187,6 +194,9 @@ class DIHRobot:
                     else:
                         print("  Doesn't need water — skipping.")
 
+                cv2.imshow("Live Feed", cv_img)
+                cv2.waitKey(1)
+
         print("\nResetting arm to homed position.")
         self.set_target(0, 7000)
         self.set_target(1, 6000)
@@ -197,6 +207,7 @@ class DIHRobot:
         print("=== Cycle complete — sleeping. ===\n")
 
     def cleanup(self):
+        cv2.destroyAllWindows()
         self.picam2.stop()
         if self.port:
             self.port.close()
