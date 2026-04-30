@@ -180,7 +180,7 @@ class DIHRobot:
                     name, conf = self.identify_plant(crop)
                     print(f"  Species: {name} ({conf * 100:.1f}%)")
 
-                    if conf < 0.5:
+                    if conf < 0.2:
                         print("  Confidence too low (<50%) — skipping.")
                         cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                         continue
