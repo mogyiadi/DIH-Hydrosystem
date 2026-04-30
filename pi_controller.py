@@ -61,8 +61,12 @@ class DIHRobot:
 
         print("Warming up camera natively with Picamera2...")
         self.picam2 = Picamera2()
-        config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
+        config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "BGR888"})
         self.picam2.configure(config)
+        
+        # Improve color accuracy
+        self.picam2.set_controls({"AutoWhiteBalance": 0, "AwbMode": 1})  # Use daylight white balance
+        
         self.picam2.start()
         time.sleep(2.0)  # Let the camera auto-expose
         print("Ready.\n")
@@ -84,6 +88,8 @@ class DIHRobot:
         # Safety Check: If the frame somehow still has 4 channels, slice off the 4th one
         if frame.shape[-1] == 4:
             frame = frame[:, :, :3]
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Camera is mounted upside down
         return Image.fromarray(frame).rotate(180)
