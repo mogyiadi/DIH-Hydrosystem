@@ -73,7 +73,7 @@ class DIHRobot:
 
         print("Warming up camera natively with Picamera2...")
         self.picam2 = Picamera2()
-        config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "BGR888"})
+        config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
         self.picam2.configure(config)
         
         # Improve color accuracy
@@ -100,8 +100,6 @@ class DIHRobot:
         # Safety Check: If the frame somehow still has 4 channels, slice off the 4th one
         if frame.shape[-1] == 4:
             frame = frame[:, :, :3]
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Camera is rotated 90 degrees to the right (clockwise)
         # To correct, rotate 90 degrees counter-clockwise (expand=True to swap dimensions)
@@ -210,14 +208,17 @@ class DIHRobot:
 
         # Sweep forward and backward
         forward_steps = list(range(4000, 7501, 100))
-        pan_steps = forward_steps + forward_steps[-2:0:-1]
 
         recent_plants = []  # list of (centred_pan, timestamp)
 
         while True:
-            for tilt_pos in TILT_STEPS:
+            for i, tilt_pos in enumerate(TILT_STEPS):
                 print(f"\n=== Scanning at tilt position {tilt_pos} ===")
-                for pan_pos in pan_steps:
+                
+                # Alternate direction per tilt level (zigzag)
+                current_pan_steps = forward_steps if i % 2 == 0 else list(reversed(forward_steps))
+                
+                for pan_pos in current_pan_steps:
                     print(f"\n--- Scanning at pan {pan_pos}, tilt {tilt_pos} ---")
                     self.set_target(1, pan_pos)
                     self.set_target(2, tilt_pos)
