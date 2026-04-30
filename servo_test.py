@@ -2,7 +2,7 @@ import time
 import serial
 
 # --- Configuration ---
-CHANNEL = 1
+CHANNEL = 2  # Changed to Tilt servo (was 1 for pan)
 PORT = '/dev/ttyACM0'
 BAUD_RATE = 9600
 
@@ -31,29 +31,27 @@ def set_target_us(channel, target_us):
     print(f"Sent {target_us} µs (Maestro target: {target_qms}) to Channel {channel}")
 
 
-print(f"\n=== Starting Limit Test on Channel {CHANNEL} ===")
+print(f"\n=== Setting Tilt Servo (Channel {CHANNEL}) ===")
 
 try:
+    # In pi_controller.py, the default level tilt is 6200 qms (1550 us)
+    print("\n--- Moving to Level Position (1550 µs) ---")
+    set_target_us(CHANNEL, 1550)
+    time.sleep(2)
+
+    # Almost upstraight. Depending on how the servo is physically mounted,
+    # "up" will either be towards ~800 us or towards ~2200 us.
+    print("\n--- Moving to Almost Upstraight Position (2200 µs) ---")
+    print("(Note: If this points down instead of up, simply change 2200 to 800 in the script!)")
+    set_target_us(CHANNEL, 2200)
+
+    print("\nPosition set. Holding... Press Ctrl+C to stop.")
     while True:
-        print("\n--- Moving to Minimum limit (500 µs) ---")
-        # Watch the starting position
-        set_target_us(CHANNEL, 500)
-        time.sleep(4)
-
-        print("\n--- Moving to Maximum limit (2500 µs) ---")
-        # Watch how far it travels from the start
-        set_target_us(CHANNEL, 2500)
-        time.sleep(4)
-
-        print("\n--- Returning to Center (1500 µs) ---")
-        set_target_us(CHANNEL, 1500)
-        time.sleep(4)
-
-        print("\nRepeating test. Press Ctrl+C to stop.")
+        time.sleep(1)
 
 except KeyboardInterrupt:
-    print("\nInterrupted! Returning to center and cleaning up...")
-    set_target_us(CHANNEL, 1500)
+    print("\nInterrupted! Leaving servo in almost vertical position and cleaning up...")
     time.sleep(1)
     port.close()
     print("Port closed.")
+
