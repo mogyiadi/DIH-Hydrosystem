@@ -31,26 +31,22 @@ def set_target_us(channel, target_us):
     print(f"Sent {target_us} µs (Maestro target: {target_qms}) to Channel {channel}")
 
 
-print(f"\n=== Setting Tilt Servo (Channel {CHANNEL}) ===")
+print(f"\n=== Setting Servos to Straight Position ===")
 
 try:
-    # In pi_controller.py, the default level tilt is 6200 qms (1550 us)
-    print("\n--- Moving to Level Position (1550 µs) ---")
-    set_target_us(0, 0)
-    time.sleep(2)
+    print("\n--- Moving Channel 0 to Straight Position (1500 µs) ---")
+    set_target_us(0, 1500)
+    time.sleep(1)
 
-    # Almost upstraight. Depending on how the servo is physically mounted,
-    # "up" will either be towards ~800 us or towards ~2200 us.
-    print("\n--- Moving to Almost Upstraight Position (2200 µs) ---")
-    print("(Note: If this points down instead of up, simply change 2200 to 800 in the script!)")
-    set_target_us(CHANNEL, 0)
+    print("\n--- Moving Channel 2 to Straight Position (1500 µs) ---")
+    set_target_us(2, 1500)
 
-    print("\nPosition set. Holding... Press Ctrl+C to stop.")
+    print("\nPositions set. Holding... Press Ctrl+C to stop.")
     while True:
         time.sleep(1)
 
 except KeyboardInterrupt:
-    print("\nInterrupted! Leaving servo in almost vertical position and cleaning up...")
+    print("\nInterrupted! Leaving servos in straight position and cleaning up...")
     time.sleep(1)
     port.close()
     print("Port closed.")
