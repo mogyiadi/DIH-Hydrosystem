@@ -36,14 +36,14 @@ print(f"\n=== Setting Tilt Servo (Channel {CHANNEL}) ===")
 try:
     # In pi_controller.py, the default level tilt is 6200 qms (1550 us)
     print("\n--- Moving to Level Position (1550 µs) ---")
-    set_target_us(CHANNEL, 1550)
+    set_target_us(0, 0)
     time.sleep(2)
 
     # Almost upstraight. Depending on how the servo is physically mounted,
     # "up" will either be towards ~800 us or towards ~2200 us.
     print("\n--- Moving to Almost Upstraight Position (2200 µs) ---")
     print("(Note: If this points down instead of up, simply change 2200 to 800 in the script!)")
-    set_target_us(CHANNEL, 200)
+    set_target_us(CHANNEL, 0)
 
     print("\nPosition set. Holding... Press Ctrl+C to stop.")
     while True:
