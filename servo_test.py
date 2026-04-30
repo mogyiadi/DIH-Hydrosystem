@@ -35,11 +35,11 @@ print(f"\n=== Setting Servos to Straight Position ===")
 
 try:
     print("\n--- Moving Channel 0 to Straight Position (1500 µs) ---")
-    set_target_us(0, 1500)
+    set_target_us(0, 100)
     time.sleep(1)
 
     print("\n--- Moving Channel 2 to Straight Position (1500 µs) ---")
-    set_target_us(2, 1500)
+    set_target_us(2, 100)
 
     print("\nPositions set. Holding... Press Ctrl+C to stop.")
     while True:
