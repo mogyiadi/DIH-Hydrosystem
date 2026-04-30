@@ -160,6 +160,12 @@ class DIHRobot:
 
             # Recapture and get new center
             img = self.capture_image()
+
+            cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            cv2.putText(cv_img, "Aiming...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
+            cv2.imshow("Live Feed", cv_img)
+            cv2.waitKey(1)
+
             pots = self.detect_pots(img)
             if not pots:
                 break
@@ -172,7 +178,7 @@ class DIHRobot:
         print("=== DIH cycle start ===")
 
         # Sweep forward and backward
-        forward_steps = list(range(4000, 9001, 100))
+        forward_steps = list(range(4000, 7501, 100))
         pan_steps = forward_steps + forward_steps[-2:0:-1]
 
         recent_plants = []  # list of (centred_pan, timestamp)
@@ -245,14 +251,24 @@ class DIHRobot:
                             recent_plants.append((self.current_pan, time.time()))
 
                             print("  *Pretending to water*")
-                            time.sleep(10.0)
+                            for _ in range(100):
+                                w_img = self.capture_image()
+                                cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
+                                cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                                cv2.imshow("Live Feed", cv_w_img)
+                                cv2.waitKey(100)
 
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, pan_pos)
                             self.set_target(2, 6200)
                             self.current_pan = pan_pos
                             self.current_tilt = 6200
-                            time.sleep(1.5)
+                            for _ in range(15):
+                                ret_img = self.capture_image()
+                                cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
+                                cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                cv2.imshow("Live Feed", cv_ret_img)
+                                cv2.waitKey(100)
                         else:
                             print("  Doesn't need water — skipping.")
                             # Store the estimate so we don't re-identify it either
