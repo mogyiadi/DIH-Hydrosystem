@@ -195,7 +195,7 @@ class DIHRobot:
                             self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
                             # No water logic for now since pump is disconnected
                             print("  *Pretending to water*")
-                            time.sleep(2.0)
+                            time.sleep(10.0)
 
                             print("  Returning to scan position for next plant...")
                             self.set_target(1, self.current_pan)
