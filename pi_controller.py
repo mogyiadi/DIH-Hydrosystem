@@ -150,7 +150,7 @@ class DIHRobot:
         print("=== DIH cycle start ===")
 
         # Sweep forward and backward
-        forward_steps = list(range(2000, 7001, 100))
+        forward_steps = list(range(4000, 9001, 100))
         pan_steps = forward_steps + forward_steps[-2:0:-1]
 
         while True:
