@@ -37,6 +37,7 @@ class DIHRobot:
             self.set_target(1, 6000)
             self.set_target(2, 6200)
             self.current_pan = 6000
+            self.current_tilt = 6200
             time.sleep(1)
         except Exception as e:
             print(f"Could not connect to serial port. Error: {e}")
@@ -120,33 +121,48 @@ class DIHRobot:
     def aim(self, center_x, center_y, image_width, image_height):
         """
         Map pixel positions to Maestro targets for Servos 1 (Pan) and 2 (Tilt).
+        Iteratively center the plant in the frame.
         """
-        # Horizontal / Pan (Servo 1)
-        normalized_x = (center_x / image_width) - 0.5
-        angle_x = normalized_x * CAMERA_FOV  # Uses horizontal FOV (62.2°)
+        cx, cy = center_x, center_y
+        for _ in range(5):  # Max 5 iterations to center
+            # Horizontal / Pan (Servo 1)
+            normalized_x = (cx / image_width) - 0.5
+            angle_x = normalized_x * CAMERA_FOV
 
-        # Vertical / Tilt (Servo 2)
-        CAMERA_FOV_V = 48.8  # Vertical FOV for Pi Camera v2
-        normalized_y = (center_y / image_height) - 0.5
-        angle_y = normalized_y * CAMERA_FOV_V
+            # Vertical / Tilt (Servo 2)
+            CAMERA_FOV_V = 48.8
+            normalized_y = (cy / image_height) - 0.5
+            angle_y = normalized_y * CAMERA_FOV_V
 
-        print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
+            if abs(normalized_x) < 0.05 and abs(normalized_y) < 0.05:
+                print("  Target centered.")
+                break
 
-        # Map degrees to Maestro target
-        target_1_qms = self.current_pan + int(angle_x * 44.44) # increased multiplier just in case
-        target_2_qms = 6200 + int(angle_y * 22.22)
+            print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
 
-        # Apply hard safety limits to prevent the servos from over-rotating. 
-        target_1_qms = max(0, min(16000, target_1_qms))
-        target_2_qms = max(0, min(16000, target_2_qms))
+            # Map degrees to Maestro target (using smaller steps to converge safely)
+            target_1_qms = self.current_pan + int(angle_x * 25.0)
+            target_2_qms = self.current_tilt + int(angle_y * 25.0)
 
-        print(f"  Sending Pan  (Servo 1) to {target_1_qms}")
-        print(f"  Sending Tilt (Servo 2) to {target_2_qms}")
+            target_1_qms = max(0, min(16000, target_1_qms))
+            target_2_qms = max(0, min(16000, target_2_qms))
 
-        self.set_target(1, target_1_qms)
-        self.set_target(2, target_2_qms)
-        # Give enough time for large aiming movements
-        time.sleep(1.5)
+            self.set_target(1, target_1_qms)
+            self.set_target(2, target_2_qms)
+            self.current_pan = target_1_qms
+            self.current_tilt = target_2_qms
+
+            time.sleep(1.0)
+
+            # Recapture and get new center
+            img = self.capture_image()
+            pots = self.detect_pots(img)
+            if not pots:
+                break
+
+            # Find the pot closest to the center of the image
+            closest = min(pots, key=lambda p: abs(p["center_x"]/image_width - 0.5) + abs(p["center_y"]/image_height - 0.5))
+            cx, cy = closest["center_x"], closest["center_y"]
 
     def run_cycle(self):
         print("=== DIH cycle start ===")
@@ -195,10 +211,10 @@ class DIHRobot:
                         # Calculate the absolute target pan for this pot to track it
                         normalized_x = (pot["center_x"] / image_width) - 0.5
                         angle_x = normalized_x * CAMERA_FOV
-                        target_pan = self.current_pan + int(angle_x * 44.44)
+                        target_pan = self.current_pan + int(angle_x * 25.0)
 
                         # Skip if we successfully processed a plant at this physical location recently
-                        if any(abs(target_pan - p[0]) < 600 for p in recent_plants):
+                        if any(abs(target_pan - p[0]) < 800 for p in recent_plants):
                             continue
 
                         x1, y1, x2, y2 = pot["bbox"]
@@ -222,21 +238,25 @@ class DIHRobot:
                         cv2.imshow("Live Feed", cv_img)
                         cv2.waitKey(1)
 
-                        # Remember this plant's location so we don't identify/water it again for 60 seconds
-                        recent_plants.append((target_pan, time.time()))
-
                         if self.needs_water(crop, name):
                             self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+
+                            # Remember this plant's actual centered location
+                            recent_plants.append((self.current_pan, time.time()))
+
                             # No water logic for now since pump is disconnected
                             print("  *Pretending to water*")
                             time.sleep(10.0)
 
                             print("  Returning to scan position for next plant...")
-                            self.set_target(1, self.current_pan)
+                            self.set_target(1, pan_pos)
                             self.set_target(2, 6200)
+                            self.current_pan = pan_pos
+                            self.current_tilt = 6200
                             time.sleep(1.5)
                         else:
                             print("  Doesn't need water — skipping.")
+                            recent_plants.append((target_pan, time.time()))
 
 
         # The loop runs indefinitely until KeyboardInterrupt
