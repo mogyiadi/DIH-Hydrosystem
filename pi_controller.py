@@ -128,6 +128,9 @@ class DIHRobot:
         Iteratively center the plant in the frame.
         """
         cx, cy = center_x, center_y
+        final_img = None
+        final_pot = None
+
         for _ in range(5):  # Max 5 iterations to center
             # Horizontal / Pan (Servo 1)
             normalized_x = (cx / image_width) - 0.5
@@ -144,9 +147,9 @@ class DIHRobot:
 
             print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
 
-            # negate corrections
+            # update corrections (flipped sign for tilt to look down correctly)
             target_1_qms = self.current_pan  - int(angle_x * 25.0)
-            target_2_qms = self.current_tilt - int(angle_y * 25.0)
+            target_2_qms = self.current_tilt + int(angle_y * 25.0)
 
             target_1_qms = max(0, min(16000, target_1_qms))
             target_2_qms = max(0, min(16000, target_2_qms))
@@ -160,19 +163,29 @@ class DIHRobot:
 
             # Recapture and get new center
             img = self.capture_image()
+            pots = self.detect_pots(img)
 
             cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
             cv2.putText(cv_img, "Aiming...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
+
+            for pot in pots:
+                x1, y1, x2, y2 = pot["bbox"]
+                cv2.rectangle(cv_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
             cv2.imshow("Live Feed", cv_img)
             cv2.waitKey(1)
 
-            pots = self.detect_pots(img)
             if not pots:
                 break
 
             # Find the pot closest to the center of the image
             closest = min(pots, key=lambda p: abs(p["center_x"]/image_width - 0.5) + abs(p["center_y"]/image_height - 0.5))
             cx, cy = closest["center_x"], closest["center_y"]
+            final_img = img
+            final_pot = closest
+
+        return final_img, final_pot
 
     def run_cycle(self):
         print("=== DIH cycle start ===")
@@ -224,30 +237,51 @@ class DIHRobot:
                             print(f"  [Plant {i+1}] Already handled — skipping.")
                             continue
 
-                        x1, y1, x2, y2 = pot["bbox"]
                         print(f"\n[Plant {i + 1}/{len(pots)}]")
+
+                        # Aim and center this pot first
+                        centered_img, centered_pot = self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+
+                        if centered_pot is None:
+                            print("  Lost plant during aiming.")
+                            self.set_target(1, pan_pos)
+                            self.set_target(2, 6200)
+                            self.current_pan = pan_pos
+                            self.current_tilt = 6200
+                            continue
+
+                        x1, y1, x2, y2 = centered_pot["bbox"]
 
                         # Expand crop slightly to give Model B better context
                         padding = 20
-                        crop = image.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
+                        crop = centered_img.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
 
                         name, conf = self.identify_plant(crop)
                         print(f"  Species: {name} ({conf * 100:.1f}%)")
 
+                        # We need to take a fresh feed frame and write the result on it
+                        display_img = self.capture_image()
+                        cv_display_img = cv2.cvtColor(np.array(display_img), cv2.COLOR_RGB2BGR)
+
                         if conf < 0.2:
                             print("  Confidence too low (<20%) — skipping.")
-                            cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                            cv2.imshow("Live Feed", cv_img)
+                            cv2.putText(cv_display_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                            cv2.imshow("Live Feed", cv_display_img)
                             cv2.waitKey(1)
+                            # Returning to scan position
+                            print("  Returning to scan position for next plant...")
+                            self.set_target(1, pan_pos)
+                            self.set_target(2, 6200)
+                            self.current_pan = pan_pos
+                            self.current_tilt = 6200
+                            time.sleep(1.5)
                             continue
 
-                        cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        cv2.imshow("Live Feed", cv_img)
+                        cv2.putText(cv_display_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.imshow("Live Feed", cv_display_img)
                         cv2.waitKey(1)
 
                         if self.needs_water(crop, name):
-                            self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
-
                             recent_plants.append((self.current_pan, time.time()))
 
                             print("  *Pretending to water*")
@@ -273,6 +307,18 @@ class DIHRobot:
                             print("  Doesn't need water — skipping.")
                             # Store the estimate so we don't re-identify it either
                             recent_plants.append((estimated_pan, time.time()))
+                            # Returning to scan position
+                            print("  Returning to scan position for next plant...")
+                            self.set_target(1, pan_pos)
+                            self.set_target(2, 6200)
+                            self.current_pan = pan_pos
+                            self.current_tilt = 6200
+                            for _ in range(15):
+                                ret_img = self.capture_image()
+                                cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
+                                cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                cv2.imshow("Live Feed", cv_ret_img)
+                                cv2.waitKey(100)
 
         # The loop runs indefinitely until KeyboardInterrupt
 
