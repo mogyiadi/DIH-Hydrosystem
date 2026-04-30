@@ -84,7 +84,7 @@ class DIHRobot:
 
     def detect_pots(self, image):
         """Model A — returns list of dicts with bbox and center_x, sorted left→right."""
-        results = self.model_a.predict(image, verbose=False)
+        results = self.model_a.predict(image, conf=0.25, verbose=False)
         pots = []
         for result in results:
             if result.boxes is None:
@@ -153,7 +153,13 @@ class DIHRobot:
         forward_steps = list(range(4000, 9001, 100))
         pan_steps = forward_steps + forward_steps[-2:0:-1]
 
+        recent_plants = []  # Stores tuples of (absolute_pan_target, timestamp) to avoid re-identifying
+
         while True:
+            # Clean old tracked plants (older than 60 seconds)
+            # current_time = time.time()
+            # recent_plants = [p for p in recent_plants if current_time - p[1] < 60.0]
+
             for pan_pos in pan_steps:
                 print(f"\n--- Scanning at pan position {pan_pos} ---")
                 self.set_target(1, pan_pos)
@@ -169,27 +175,53 @@ class DIHRobot:
                 image_height = image.size[1]
 
                 pots = self.detect_pots(image)
+                
+                # Draw all Model A bounding boxes early so we see them immediately
+                for pot in pots:
+                    x1, y1, x2, y2 = pot["bbox"]
+                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                
+                cv2.imshow("Live Feed", cv_img)
+                cv2.waitKey(1)
+
                 if not pots:
                     print("No plants detected — moving on.")
-                    cv2.imshow("Live Feed", cv_img)
-                    cv2.waitKey(1)
                 else:
                     print(f"Detected {len(pots)} pot(s).")
                     for i, pot in enumerate(pots):
+                        # Calculate the absolute target pan for this pot to track it
+                        normalized_x = (pot["center_x"] / image_width) - 0.5
+                        angle_x = normalized_x * CAMERA_FOV
+                        target_pan = self.current_pan + int(angle_x * 44.44)
+
+                        # Skip if we successfully processed a plant at this physical location recently
+                        if any(abs(target_pan - p[0]) < 600 for p in recent_plants):
+                            continue
+
                         x1, y1, x2, y2 = pot["bbox"]
-                        cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         print(f"\n[Plant {i + 1}/{len(pots)}]")
 
-                        crop = image.crop((x1, y1, x2, y2))
+                        # Expand crop slightly to give Model B better context
+                        padding = 20
+                        crop = image.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
+
                         name, conf = self.identify_plant(crop)
                         print(f"  Species: {name} ({conf * 100:.1f}%)")
 
                         if conf < 0.2:
                             print("  Confidence too low (<20%) — skipping.")
-                            cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                            cv2.putText(cv_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                            cv2.imshow("Live Feed", cv_img)
+                            cv2.waitKey(1)
                             continue
 
-                        cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.putText(cv_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.imshow("Live Feed", cv_img)
+                        cv2.waitKey(1)
+
+                        # Remember this plant's location so we don't identify/water it again for 60 seconds
+                        recent_plants.append((target_pan, time.time()))
 
                         if self.needs_water(crop, name):
                             self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
@@ -204,8 +236,6 @@ class DIHRobot:
                         else:
                             print("  Doesn't need water — skipping.")
 
-                cv2.imshow("Live Feed", cv_img)
-                cv2.waitKey(1)
 
         # The loop runs indefinitely until KeyboardInterrupt
 
