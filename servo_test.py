@@ -43,7 +43,7 @@ try:
     # "up" will either be towards ~800 us or towards ~2200 us.
     print("\n--- Moving to Almost Upstraight Position (2200 µs) ---")
     print("(Note: If this points down instead of up, simply change 2200 to 800 in the script!)")
-    set_target_us(CHANNEL, 2200)
+    set_target_us(CHANNEL, 8000)
 
     print("\nPosition set. Holding... Press Ctrl+C to stop.")
     while True:
