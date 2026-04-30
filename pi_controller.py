@@ -36,6 +36,9 @@ SERVO_2_VERTICAL_POS = 4000
 SERVO_0_BOW_POS = 5000
 SERVO_2_BOW_POS = 4000
 
+# Tilt levels for scanning to capture both near and far plants
+TILT_STEPS = [4000, 5000, 6000]
+
 
 class DIHRobot:
 
@@ -212,136 +215,149 @@ class DIHRobot:
         recent_plants = []  # list of (centred_pan, timestamp)
 
         while True:
-            for pan_pos in pan_steps:
-                print(f"\n--- Scanning at pan position {pan_pos} ---")
-                self.set_target(1, pan_pos)
-                self.set_target(2, SERVO_2_VERTICAL_POS)  # Ensure tilt is level for the scan
-                self.current_pan = pan_pos
+            for tilt_pos in TILT_STEPS:
+                print(f"\n=== Scanning at tilt position {tilt_pos} ===")
+                for pan_pos in pan_steps:
+                    print(f"\n--- Scanning at pan {pan_pos}, tilt {tilt_pos} ---")
+                    self.set_target(1, pan_pos)
+                    self.set_target(2, tilt_pos)
+                    self.current_pan = pan_pos
+                    self.current_tilt = tilt_pos
 
-                time.sleep(0.1)
+                    time.sleep(0.1)
 
-                image = self.capture_image()
-                cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                    image = self.capture_image()
+                    cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-                image_width = image.size[0]
-                image_height = image.size[1]
+                    image_width = image.size[0]
+                    image_height = image.size[1]
 
-                pots = self.detect_pots(image)
+                    pots = self.detect_pots(image)
 
-                # Draw all Model A bounding boxes early so we see them immediately
-                for pot in pots:
-                    x1, y1, x2, y2 = pot["bbox"]
-                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
-                    cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
+                    # Draw all Model A bounding boxes early so we see them immediately
+                    for pot in pots:
+                        x1, y1, x2, y2 = pot["bbox"]
+                        cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
+                        cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
 
-                cv2.imshow("Live Feed", cv_img)
-                cv2.waitKey(1)
+                    cv2.imshow("Live Feed", cv_img)
+                    cv2.waitKey(1)
 
-                if not pots:
-                    print("No plants detected — moving on.")
-                else:
-                    print(f"Detected {len(pots)} pot(s).")
-                    for i, pot in enumerate(pots):
-                        # Estimate the absolute pan that would centre this pot.
-                        # Used only to decide whether we've already handled it.
-                        normalized_x = (pot["center_x"] / image_width) - 0.5
-                        angle_x = normalized_x * CAMERA_FOV
-                        estimated_pan = self.current_pan - int(angle_x * 25.0)
+                    if not pots:
+                        print("No plants detected — moving on.")
+                    else:
+                        print(f"Detected {len(pots)} pot(s).")
+                        for i, pot in enumerate(pots):
+                            # Estimate the absolute pan that would centre this pot.
+                            # Used only to decide whether we've already handled it.
+                            normalized_x = (pot["center_x"] / image_width) - 0.5
+                            angle_x = normalized_x * CAMERA_FOV
+                            estimated_pan = self.current_pan - int(angle_x * 25.0)
 
-                        if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
-                            print(f"  [Plant {i+1}] Already handled — skipping.")
-                            continue
+                            if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
+                                print(f"  [Plant {i+1}] Already handled — skipping.")
+                                continue
 
-                        print(f"\n[Plant {i + 1}/{len(pots)}]")
+                            print(f"\n[Plant {i + 1}/{len(pots)}]")
 
-                        # Aim and center this pot first
-                        centered_img, centered_pot = self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+                            # Aim and center this pot first
+                            centered_img, centered_pot = self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
 
-                        if centered_pot is None:
-                            print("  Lost plant during aiming.")
-                            self.set_target(1, pan_pos)
-                            self.set_target(2, SERVO_2_VERTICAL_POS)
-                            self.current_pan = pan_pos
-                            self.current_tilt = SERVO_2_VERTICAL_POS
-                            continue
+                            if centered_pot is None:
+                                print("  Lost plant during aiming.")
+                                self.set_target(1, pan_pos)
+                                self.set_target(2, tilt_pos)
+                                self.current_pan = pan_pos
+                                self.current_tilt = tilt_pos
+                                continue
 
-                        x1, y1, x2, y2 = centered_pot["bbox"]
+                            x1, y1, x2, y2 = centered_pot["bbox"]
 
-                        # Expand crop slightly to give Model B better context
-                        padding = 20
-                        crop = centered_img.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
+                            # Expand crop slightly to give Model B better context
+                            padding = 20
+                            crop = centered_img.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
 
-                        name, conf = self.identify_plant(crop)
-                        print(f"  Species: {name} ({conf * 100:.1f}%)")
+                            name, conf = self.identify_plant(crop)
+                            print(f"  Species: {name} ({conf * 100:.1f}%)")
 
-                        # We need to take a fresh feed frame and write the result on it
-                        display_img = self.capture_image()
-                        cv_display_img = cv2.cvtColor(np.array(display_img), cv2.COLOR_RGB2BGR)
+                            # We need to take a fresh feed frame and write the result on it
+                            display_img = self.capture_image()
+                            cv_display_img = cv2.cvtColor(np.array(display_img), cv2.COLOR_RGB2BGR)
 
-                        if conf < 0.2:
-                            print("  Confidence too low (<20%) — skipping.")
-                            cv2.putText(cv_display_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                            if conf < 0.2:
+                                print("  Confidence too low (<20%) — skipping.")
+                                cv2.putText(cv_display_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                                cv2.imshow("Live Feed", cv_display_img)
+                                cv2.waitKey(1)
+                                # Returning to scan position
+                                print("  Returning to scan position for next plant...")
+                                self.set_target(1, pan_pos)
+                                self.set_target(2, tilt_pos)
+                                self.current_pan = pan_pos
+                                self.current_tilt = tilt_pos
+                                time.sleep(1.5)
+                                continue
+
+                            cv2.putText(cv_display_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                             cv2.imshow("Live Feed", cv_display_img)
                             cv2.waitKey(1)
-                            # Returning to scan position
-                            print("  Returning to scan position for next plant...")
-                            self.set_target(1, pan_pos)
-                            self.set_target(2, SERVO_2_VERTICAL_POS)
-                            self.current_pan = pan_pos
-                            self.current_tilt = SERVO_2_VERTICAL_POS
-                            time.sleep(1.5)
-                            continue
 
-                        cv2.putText(cv_display_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        cv2.imshow("Live Feed", cv_display_img)
-                        cv2.waitKey(1)
+                            if self.needs_water(crop, name):
+                                recent_plants.append((self.current_pan, time.time()))
 
-                        if self.needs_water(crop, name):
-                            recent_plants.append((self.current_pan, time.time()))
+                                print("  Bowing down to water...")
+                                
+                                # Adjust bow position if the plant is closer (higher tilt value)
+                                adjusted_servo_0_bow = SERVO_0_BOW_POS
+                                adjusted_servo_2_bow = SERVO_2_BOW_POS
+                                if self.current_tilt > 4500:
+                                    # Bow further down to reach closer plants
+                                    tilt_diff = self.current_tilt - 4000
+                                    adjusted_servo_0_bow -= int(tilt_diff * 0.5)
+                                    adjusted_servo_2_bow += int(tilt_diff * 0.5)
 
-                            print("  Bowing down to water...")
-                            self.set_target(0, SERVO_0_BOW_POS)
-                            self.set_target(2, SERVO_2_BOW_POS)
-                            time.sleep(1.5)
+                                self.set_target(0, adjusted_servo_0_bow)
+                                self.set_target(2, adjusted_servo_2_bow)
+                                time.sleep(1.5)
 
-                            print("  *Pretending to water*")
-                            for _ in range(100):
-                                w_img = self.capture_image()
-                                cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
-                                cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-                                cv2.imshow("Live Feed", cv_w_img)
-                                cv2.waitKey(100)
+                                print("  *Pretending to water*")
+                                for _ in range(100):
+                                    w_img = self.capture_image()
+                                    cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
+                                    cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                                    cv2.imshow("Live Feed", cv_w_img)
+                                    cv2.waitKey(100)
 
-                            print("  Returning to upright position...")
-                            self.set_target(0, SERVO_0_VERTICAL_POS)
+                                print("  Returning to upright position...")
+                                self.set_target(0, SERVO_0_VERTICAL_POS)
 
-                            print("  Returning to scan position for next plant...")
-                            self.set_target(1, pan_pos)
-                            self.set_target(2, SERVO_2_VERTICAL_POS)
-                            self.current_pan = pan_pos
-                            self.current_tilt = SERVO_2_VERTICAL_POS
-                            for _ in range(15):
-                                ret_img = self.capture_image()
-                                cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
-                                cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                cv2.imshow("Live Feed", cv_ret_img)
-                                cv2.waitKey(100)
-                        else:
-                            print("  Doesn't need water — skipping.")
-                            # Store the estimate so we don't re-identify it either
-                            recent_plants.append((estimated_pan, time.time()))
-                            # Returning to scan position
-                            print("  Returning to scan position for next plant...")
-                            self.set_target(1, pan_pos)
-                            self.set_target(2, SERVO_2_VERTICAL_POS)
-                            self.current_pan = pan_pos
-                            self.current_tilt = SERVO_2_VERTICAL_POS
-                            for _ in range(15):
-                                ret_img = self.capture_image()
-                                cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
-                                cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                cv2.imshow("Live Feed", cv_ret_img)
-                                cv2.waitKey(100)
+                                print("  Returning to scan position for next plant...")
+                                self.set_target(1, pan_pos)
+                                self.set_target(2, tilt_pos)
+                                self.current_pan = pan_pos
+                                self.current_tilt = tilt_pos
+                                for _ in range(15):
+                                    ret_img = self.capture_image()
+                                    cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
+                                    cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                    cv2.imshow("Live Feed", cv_ret_img)
+                                    cv2.waitKey(100)
+                            else:
+                                print("  Doesn't need water — skipping.")
+                                # Store the estimate so we don't re-identify it either
+                                recent_plants.append((estimated_pan, time.time()))
+                                # Returning to scan position
+                                print("  Returning to scan position for next plant...")
+                                self.set_target(1, pan_pos)
+                                self.set_target(2, tilt_pos)
+                                self.current_pan = pan_pos
+                                self.current_tilt = tilt_pos
+                                for _ in range(15):
+                                    ret_img = self.capture_image()
+                                    cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
+                                    cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                    cv2.imshow("Live Feed", cv_ret_img)
+                                    cv2.waitKey(100)
 
         # The loop runs indefinitely until KeyboardInterrupt
 
