@@ -65,8 +65,8 @@ class DIHRobot:
         self.picam2.configure(config)
         
         # Improve color accuracy
-        self.picam2.set_controls({"AutoWhiteBalance": 0, "AwbMode": 1})  # Use daylight white balance
-        
+        self.picam2.set_controls({"AwbEnable": False, "AwbMode": 1})  # Use daylight white balance
+
         self.picam2.start()
         time.sleep(2.0)  # Let the camera auto-expose
         print("Ready.\n")
