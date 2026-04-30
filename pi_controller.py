@@ -85,7 +85,8 @@ class DIHRobot:
 
     def detect_pots(self, image):
         """Model A — returns list of dicts with bbox and center_x, sorted left→right."""
-        results = self.model_a.predict(image, conf=0.25, verbose=False)
+        # We only want to identify class 58 (potted plant)
+        results = self.model_a.predict(image, conf=0.25, classes=[58], verbose=False)
         pots = []
         for result in results:
             if result.boxes is None:
