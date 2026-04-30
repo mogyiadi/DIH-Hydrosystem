@@ -34,7 +34,7 @@ SERVO_2_VERTICAL_POS = 4000
 
 # Bow position for watering (Hose points forward/down)
 SERVO_0_BOW_POS = 5000
-SERVO_2_BOW_POS = 8000
+SERVO_2_BOW_POS = 4000
 
 
 class DIHRobot:
