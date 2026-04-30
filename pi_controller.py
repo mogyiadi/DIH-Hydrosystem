@@ -22,6 +22,10 @@ MODEL_A_PATH    = "yolo26n.pt"
 MODEL_B_PATH    = "model_b.tflite"
 CLASS_NAMES_PATH= "class_names.txt"
 
+# How close two pan positions must be (in quarter-microseconds) to be considered
+# the same physical plant.  The scan step is 100 qms; a plant is typically visible
+# across ~5-10 steps, so 600 qms gives a safe margin without merging neighbours.
+DEDUP_THRESHOLD = 600
 
 
 class DIHRobot:
@@ -140,9 +144,9 @@ class DIHRobot:
 
             print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
 
-            # Map degrees to Maestro target (using smaller steps to converge safely)
-            target_1_qms = self.current_pan + int(angle_x * 25.0)
-            target_2_qms = self.current_tilt + int(angle_y * 25.0)
+            # negate corrections
+            target_1_qms = self.current_pan  - int(angle_x * 25.0)
+            target_2_qms = self.current_tilt - int(angle_y * 25.0)
 
             target_1_qms = max(0, min(16000, target_1_qms))
             target_2_qms = max(0, min(16000, target_2_qms))
@@ -171,19 +175,15 @@ class DIHRobot:
         forward_steps = list(range(4000, 9001, 100))
         pan_steps = forward_steps + forward_steps[-2:0:-1]
 
-        recent_plants = []  # Stores tuples of (absolute_pan_target, timestamp) to avoid re-identifying
+        recent_plants = []  # list of (centred_pan, timestamp)
 
         while True:
-            # Clean old tracked plants (older than 60 seconds)
-            # current_time = time.time()
-            # recent_plants = [p for p in recent_plants if current_time - p[1] < 60.0]
-
             for pan_pos in pan_steps:
                 print(f"\n--- Scanning at pan position {pan_pos} ---")
                 self.set_target(1, pan_pos)
                 self.set_target(2, 6200)  # Ensure tilt is level for the scan
                 self.current_pan = pan_pos
-                
+
                 time.sleep(0.1)
 
                 image = self.capture_image()
@@ -193,13 +193,13 @@ class DIHRobot:
                 image_height = image.size[1]
 
                 pots = self.detect_pots(image)
-                
+
                 # Draw all Model A bounding boxes early so we see them immediately
                 for pot in pots:
                     x1, y1, x2, y2 = pot["bbox"]
                     cv2.rectangle(cv_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
                     cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                
+
                 cv2.imshow("Live Feed", cv_img)
                 cv2.waitKey(1)
 
@@ -208,13 +208,14 @@ class DIHRobot:
                 else:
                     print(f"Detected {len(pots)} pot(s).")
                     for i, pot in enumerate(pots):
-                        # Calculate the absolute target pan for this pot to track it
+                        # Estimate the absolute pan that would centre this pot.
+                        # Used only to decide whether we've already handled it.
                         normalized_x = (pot["center_x"] / image_width) - 0.5
                         angle_x = normalized_x * CAMERA_FOV
-                        target_pan = self.current_pan + int(angle_x * 25.0)
+                        estimated_pan = self.current_pan - int(angle_x * 25.0)
 
-                        # Skip if we successfully processed a plant at this physical location recently
-                        if any(abs(target_pan - p[0]) < 800 for p in recent_plants):
+                        if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
+                            print(f"  [Plant {i+1}] Already handled — skipping.")
                             continue
 
                         x1, y1, x2, y2 = pot["bbox"]
@@ -241,10 +242,8 @@ class DIHRobot:
                         if self.needs_water(crop, name):
                             self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
 
-                            # Remember this plant's actual centered location
                             recent_plants.append((self.current_pan, time.time()))
 
-                            # No water logic for now since pump is disconnected
                             print("  *Pretending to water*")
                             time.sleep(10.0)
 
@@ -256,8 +255,8 @@ class DIHRobot:
                             time.sleep(1.5)
                         else:
                             print("  Doesn't need water — skipping.")
-                            recent_plants.append((target_pan, time.time()))
-
+                            # Store the estimate so we don't re-identify it either
+                            recent_plants.append((estimated_pan, time.time()))
 
         # The loop runs indefinitely until KeyboardInterrupt
 
