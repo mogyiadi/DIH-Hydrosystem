@@ -227,31 +227,27 @@ class DIHRobot:
         return max(4000, min(7100, qms))
 
     def compute_bow(self):
-        """
-        The camera is centered on the plant at self.current_tilt.
-        The hose points 90° away from the camera, so we add 90° to the
-        current tilt angle to get the bow position.
-
-        We also use trig to estimate distance and nudge servo 0 forward
-        so the hose tip moves closer to the plant if needed.
-        """
         current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
         bow_angle_deg = current_angle_deg + 90.0
 
-        # Distance estimate — used to offset servo 0
         tilt_rad = math.radians(current_angle_deg)
         distance_cm = CAMERA_HEIGHT_CM / math.tan(tilt_rad) if tilt_rad > 0 else 999
 
         print(f"  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
         print(f"  Estimated plant distance: {distance_cm:.1f} cm")
 
-        s2_bow = self.deg_to_s2_qms(bow_angle_deg)
+        # Servo 0 angle from vertical
+        if distance_cm < 30:
+            s0_bow = 8000
+            s0_angle_deg = S0_REF_DEG  # stays at ~2°, effectively 0 offset
+        else:
+            s0_bow = 5000
+            s0_angle_deg = S0_REF_DEG + (8000 - 5000) / S0_QMS_PER_DEG  # ~75.7°
 
-        # Distance → servo 0: at ≤35 cm stay fully vertical (don't crush plant),
-        # lean progressively forward for farther plants.
-        # Close plant (<30 cm): keep servo 0 vertical to avoid crushing.
-        # Far plant (≥30 cm): fully extend servo 0 toward the plant.
-        s0_bow = 8000 if distance_cm < 30 else 5000
+        # Servo 2 must compensate: if servo 0 tips forward by X°,
+        # servo 2 needs X° less rotation to reach the same absolute angle.
+        compensated_bow_angle = bow_angle_deg - (s0_angle_deg - S0_REF_DEG)
+        s2_bow = self.deg_to_s2_qms(compensated_bow_angle)
 
         return s0_bow, s2_bow
 
