@@ -174,7 +174,7 @@ class DIHRobot:
 
             # update corrections (flipped sign for tilt to look down correctly)
             target_1_qms = self.current_pan  - int(angle_x * 25.0)
-            target_2_qms = self.current_tilt + int(angle_y * 25.0)
+            target_2_qms = self.current_tilt + int(angle_y * S2_QMS_PER_DEG)
 
             target_1_qms = max(0, min(16000, target_1_qms))
             target_2_qms = max(0, min(16000, target_2_qms))
@@ -227,7 +227,12 @@ class DIHRobot:
         return max(4000, min(7100, qms))
 
     def compute_bow(self):
+        # self.current_tilt is the QMS value aim() last wrote to servo 2
         current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
+
+        # Sanity clamp — if aim() overshot the calibration range, cap it
+        current_angle_deg = max(17.0, min(90.0, current_angle_deg))
+
         bow_angle_deg = current_angle_deg + 90.0
 
         tilt_rad = math.radians(current_angle_deg)
@@ -235,26 +240,24 @@ class DIHRobot:
 
         print(f"  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
         print(f"  Estimated plant distance: {distance_cm:.1f} cm")
+        print(f"  self.current_tilt QMS = {self.current_tilt}")
 
-        # Servo 0 angle from vertical
         if distance_cm < 30:
             s0_bow = 8000
-            s0_angle_deg = S0_REF_DEG  # stays at ~2°, effectively 0 offset
+            s0_lean_deg = 0.0
         else:
             s0_bow = 5000
-            s0_angle_deg = S0_REF_DEG + (8000 - 5000) / S0_QMS_PER_DEG  # ~75.7°
+            s0_lean_deg = (8000 - 5000) / S0_QMS_PER_DEG  # ~73.7°
 
-        # Arc correction: extra downward angle so water reaches the plant
         HOSE_HEIGHT_CM = 5.0
         arc_correction_deg = math.degrees(math.atan2(HOSE_HEIGHT_CM, distance_cm))
 
-        # Servo 2 must compensate: if servo 0 tips forward by X°,
-        # servo 2 needs X° less rotation to reach the same absolute angle.
-        compensated_bow_angle = bow_angle_deg - (s0_angle_deg - S0_REF_DEG) + arc_correction_deg
-        s2_bow = self.deg_to_s2_qms(compensated_bow_angle)
+        # Servo 2 target is relative to its own zero, compensating for servo 0 lean
+        s2_target_deg = bow_angle_deg - s0_lean_deg + arc_correction_deg
+        s2_bow = self.deg_to_s2_qms(s2_target_deg)
 
-        print(f"  S0 angle: {s0_angle_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°  S2 target: {compensated_bow_angle:.1f}°")
-        print(f"  s0_bow={s0_bow}  s2_bow={s2_bow}  compensated={compensated_bow_angle:.1f}°")
+        print(f"  S0 lean: {s0_lean_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°")
+        print(f"  S2 target: {s2_target_deg:.1f}°  →  s2_bow={s2_bow}  s0_bow={s0_bow}")
 
         return s0_bow, s2_bow
 
