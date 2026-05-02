@@ -314,7 +314,7 @@ class DIHRobot:
                                 if self.current_tilt > 4500:
                                     # For close plants, keep base (servo 0) vertical to avoid crushing the plant
                                     adjusted_servo_0_bow = SERVO_0_VERTICAL_POS
-                                    tilt_diff = self.current_tilt - 4000
+                                    tilt_diff = self.current_tilt - 2000
                                     adjusted_servo_2_bow += int(tilt_diff * 0.5)
 
                                 self.set_target(0, adjusted_servo_0_bow)
