@@ -244,10 +244,16 @@ class DIHRobot:
             s0_bow = 5000
             s0_angle_deg = S0_REF_DEG + (8000 - 5000) / S0_QMS_PER_DEG  # ~75.7°
 
+        # Arc correction: extra downward angle so water reaches the plant
+        HOSE_HEIGHT_CM = 5.0
+        arc_correction_deg = math.degrees(math.atan2(HOSE_HEIGHT_CM, distance_cm))
+
         # Servo 2 must compensate: if servo 0 tips forward by X°,
         # servo 2 needs X° less rotation to reach the same absolute angle.
-        compensated_bow_angle = bow_angle_deg - (s0_angle_deg - S0_REF_DEG)
+        compensated_bow_angle = bow_angle_deg - (s0_angle_deg - S0_REF_DEG) + arc_correction_deg
         s2_bow = self.deg_to_s2_qms(compensated_bow_angle)
+
+        print(f"  S0 angle: {s0_angle_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°  S2 target: {compensated_bow_angle:.1f}°")
 
         return s0_bow, s2_bow
 
