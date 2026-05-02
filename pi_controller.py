@@ -249,10 +249,9 @@ class DIHRobot:
 
         # Distance → servo 0: at ≤35 cm stay fully vertical (don't crush plant),
         # lean progressively forward for farther plants.
-        s0_bow = int(np.interp(distance_cm,
-                               [30, 90],
-                               [8000, 5000]))
-        s0_bow = max(4400, min(8000, s0_bow))
+        # Close plant (<30 cm): keep servo 0 vertical to avoid crushing.
+        # Far plant (≥30 cm): fully extend servo 0 toward the plant.
+        s0_bow = 8000 if distance_cm < 30 else 5000
 
         return s0_bow, s2_bow
 
