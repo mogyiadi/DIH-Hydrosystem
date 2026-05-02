@@ -23,7 +23,8 @@ MODEL_A_PATH    = "yolo26n.pt"
 MODEL_B_PATH    = "model_b.tflite"
 CLASS_NAMES_PATH= "class_names.txt"
 
-DEDUP_THRESHOLD = 600
+DEDUP_THRESHOLD_PAN = 600
+DEDUP_THRESHOLD_DIST = 10.0 # cm
 
 SERVO_0_VERTICAL_POS = 8000
 SERVO_2_VERTICAL_POS = 4000
@@ -255,11 +256,17 @@ class DIHRobot:
             cv2.imshow("Live Feed", cv_img)
             cv2.waitKey(100)
 
+    def is_recently_handled(self, pan, distance, recent_plants):
+        for p_pan, p_dist, p_time in recent_plants:
+            if abs(pan - p_pan) < DEDUP_THRESHOLD_PAN and abs(distance - p_dist) < DEDUP_THRESHOLD_DIST:
+                return True
+        return False
+
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
         forward_steps = list(range(4000, 7501, 100))
-        recent_plants = []  # list of (centred_pan, timestamp)
+        recent_plants = []  # list of (centred_pan, distance, timestamp)
 
         while True:
             for i, tilt_pos in enumerate(TILT_STEPS):
@@ -295,11 +302,22 @@ class DIHRobot:
 
                     print(f"Detected {len(pots)} pot(s).")
                     for j, pot in enumerate(pots):
+                        # Approximate distance before aiming based on pot's y-position
+                        # We don't have perfect distance yet, but we have an estimation
+                        normalized_y_pre = (pot["center_y"] / image_height) - 0.5
+                        angle_y_pre = normalized_y_pre * CAMERA_FOV_V
+                        estimated_tilt = self.current_tilt + int(angle_y_pre * S2_QMS_PER_DEG)
+                        
+                        est_angle_deg = self.tilt_qms_to_deg(estimated_tilt)
+                        est_angle_deg = max(S2_REF_DEG, min(90.0, est_angle_deg))
+                        est_tilt_rad = math.radians(est_angle_deg)
+                        estimated_dist = CAMERA_HEIGHT_CM / math.tan(est_tilt_rad) if est_tilt_rad > 0 else 999
+                        
                         normalized_x  = (pot["center_x"] / image_width) - 0.5
                         angle_x       = normalized_x * CAMERA_FOV
                         estimated_pan = self.current_pan - int(angle_x * 25.0)
 
-                        if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
+                        if self.is_recently_handled(estimated_pan, estimated_dist, recent_plants):
                             print(f"  [Plant {j+1}] Already handled — skipping.")
                             continue
 
@@ -313,9 +331,15 @@ class DIHRobot:
                             continue
                             
                         distance_cm = self.estimate_distance()
+                        
+                        if self.is_recently_handled(self.current_pan, distance_cm, recent_plants):
+                            print(f"  [Plant {j+1}] Already handled (post-aiming) — skipping.")
+                            self._return_to_scan(pan_pos, tilt_pos)
+                            continue
+
                         if distance_cm > 40:
                             print(f"  Plant too far ({distance_cm:.1f} cm > 40cm) — skipping.")
-                            recent_plants.append((self.current_pan, time.time()))
+                            recent_plants.append((self.current_pan, distance_cm, time.time()))
                             self._return_to_scan(pan_pos, tilt_pos)
                             continue
 
@@ -342,7 +366,7 @@ class DIHRobot:
                         cv2.waitKey(1)
 
                         if self.needs_water(crop, name):
-                            recent_plants.append((self.current_pan, time.time()))
+                            recent_plants.append((self.current_pan, distance_cm, time.time()))
 
                             print("  Bowing down to water...")
                             s0_bow, s2_bow = self.compute_bow()
@@ -363,7 +387,7 @@ class DIHRobot:
                             self._return_to_scan(pan_pos, tilt_pos)
                         else:
                             print("  Doesn't need water — skipping.")
-                            recent_plants.append((estimated_pan, time.time()))
+                            recent_plants.append((estimated_pan, estimated_dist, time.time()))
                             self._return_to_scan(pan_pos, tilt_pos)
 
         print("\nResetting arm to homed position.")
