@@ -254,6 +254,7 @@ class DIHRobot:
         s2_bow = self.deg_to_s2_qms(compensated_bow_angle)
 
         print(f"  S0 angle: {s0_angle_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°  S2 target: {compensated_bow_angle:.1f}°")
+        print(f"  s0_bow={s0_bow}  s2_bow={s2_bow}  compensated={compensated_bow_angle:.1f}°")
 
         return s0_bow, s2_bow
 
