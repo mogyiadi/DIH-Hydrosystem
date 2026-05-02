@@ -130,6 +130,12 @@ class DIHRobot:
         """Degrees from vertical → servo 2 QMS, clamped to safe range."""
         qms = S2_REF_QMS + int((deg - S2_REF_DEG) * S2_QMS_PER_DEG)
         return max(4000, min(7100, qms))
+        
+    def estimate_distance(self):
+        current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
+        current_angle_deg = max(S2_REF_DEG, min(90.0, current_angle_deg))
+        tilt_rad    = math.radians(current_angle_deg)
+        return CAMERA_HEIGHT_CM / math.tan(tilt_rad) if tilt_rad > 0 else 999
 
     def aim(self, center_x, center_y, image_width, image_height):
         """
@@ -207,8 +213,7 @@ class DIHRobot:
 
         bow_angle_deg = current_angle_deg + 90.0
 
-        tilt_rad    = math.radians(current_angle_deg)
-        distance_cm = CAMERA_HEIGHT_CM / math.tan(tilt_rad) if tilt_rad > 0 else 999
+        distance_cm = self.estimate_distance()
 
         print(f"  self.current_tilt={self.current_tilt}  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
         print(f"  Estimated plant distance: {distance_cm:.1f} cm")
@@ -304,6 +309,13 @@ class DIHRobot:
 
                         if centered_pot is None:
                             print("  Lost plant during aiming — returning to scan position.")
+                            self._return_to_scan(pan_pos, tilt_pos)
+                            continue
+                            
+                        distance_cm = self.estimate_distance()
+                        if distance_cm > 40:
+                            print(f"  Plant too far ({distance_cm:.1f} cm > 40cm) — skipping.")
+                            recent_plants.append((self.current_pan, time.time()))
                             self._return_to_scan(pan_pos, tilt_pos)
                             continue
 
