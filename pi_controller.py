@@ -19,35 +19,27 @@ except ImportError:
 CAMERA_FOV      = 48.8
 CAMERA_FOV_V    = 62.2
 SERVO_MOVE_WAIT = 1.5
-# MODEL_A_PATH    = "dih_model_a_results/runs/train2/weights/best.pt"
 MODEL_A_PATH    = "yolo26n.pt"
 MODEL_B_PATH    = "model_b.tflite"
 CLASS_NAMES_PATH= "class_names.txt"
 
-# How close two pan positions must be (in quarter-microseconds) to be considered
-# the same physical plant.  The scan step is 100 qms; a plant is typically visible
-# across ~5-10 steps, so 600 qms gives a safe margin without merging neighbours.
 DEDUP_THRESHOLD = 600
 
-# Vertical position for arm base (Servo 0) and top tilt (Servo 2)
 SERVO_0_VERTICAL_POS = 8000
 SERVO_2_VERTICAL_POS = 4000
 
-# Bow position for watering (Hose points forward/down)
-SERVO_0_BOW_POS = 5000
-SERVO_2_BOW_POS = 4000
-
-# Tilt levels for scanning to capture both near and far plants
 TILT_STEPS = [4000, 5000, 6000]
 
 CAMERA_HEIGHT_CM = 22.7
+HOSE_HEIGHT_CM   = 5.0
 
-# Calibrated conversions
+# Calibrated servo conversions
 S0_REF_QMS, S0_REF_DEG = 8000, 2.0
-S0_QMS_PER_DEG = 40.7  # increasing QMS = more vertical
+S0_QMS_PER_DEG          = 40.7   # decreasing QMS = more forward tilt
 
 S2_REF_QMS, S2_REF_DEG = 4000, 17.0
-S2_QMS_PER_DEG = 42.5  # increasing QMS = more horizontal
+S2_QMS_PER_DEG          = 42.5   # increasing QMS = more forward tilt
+
 
 class DIHRobot:
 
@@ -56,12 +48,10 @@ class DIHRobot:
         try:
             self.port = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
             print("Connected to controller!")
-
-            # Home arm to your default position (vertical)
             self.set_target(0, SERVO_0_VERTICAL_POS)
             self.set_target(1, 6000)
             self.set_target(2, SERVO_2_VERTICAL_POS)
-            self.current_pan = 6000
+            self.current_pan  = 6000
             self.current_tilt = SERVO_2_VERTICAL_POS
             time.sleep(1)
         except Exception as e:
@@ -84,39 +74,25 @@ class DIHRobot:
         self.picam2 = Picamera2()
         config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
         self.picam2.configure(config)
-        
-        # Improve color accuracy
-        self.picam2.set_controls({"AwbEnable": False, "AwbMode": 1})  # Use daylight white balance
-
+        self.picam2.set_controls({"AwbEnable": False, "AwbMode": 1})
         self.picam2.start()
-        time.sleep(2.0)  # Let the camera auto-expose
+        time.sleep(2.0)
         print("Ready.\n")
 
     def set_target(self, channel, target):
-        """Send target to Maestro (target in quarter-microseconds)."""
         if not self.port:
             return
-
         lsb = target & 0x7F
         msb = (target >> 7) & 0x7F
-        cmd = bytes([0x84, channel, lsb, msb])
-        self.port.write(cmd)
+        self.port.write(bytes([0x84, channel, lsb, msb]))
 
     def capture_image(self):
-        """Capture from Picamera2 and return a PIL Image in RGB format."""
         frame = self.picam2.capture_array()
-
-        # Safety Check: If the frame somehow still has 4 channels, slice off the 4th one
         if frame.shape[-1] == 4:
             frame = frame[:, :, :3]
-
-        # Camera is rotated 90 degrees to the right (clockwise)
-        # To correct, rotate 90 degrees counter-clockwise (expand=True to swap dimensions)
         return Image.fromarray(frame).rotate(90, expand=True)
 
     def detect_pots(self, image):
-        """Model A — returns list of dicts with bbox and center_x, sorted left→right."""
-        # We only want to identify class 58 (potted plant)
         results = self.model_a.predict(image, conf=0.25, classes=[58], verbose=False)
         pots = []
         for result in results:
@@ -133,7 +109,6 @@ class DIHRobot:
         return pots
 
     def identify_plant(self, crop):
-        """Model B — returns (class_name, confidence)."""
         img = crop.convert("RGB").resize((224, 224))
         inp = np.expand_dims(np.array(img, dtype=np.float32), axis=0)
         self.interpreter.set_tensor(self.input_details[0]["index"], inp)
@@ -145,25 +120,31 @@ class DIHRobot:
         return self.class_names[idx], float(out[idx])
 
     def needs_water(self, crop, plant_class):
-        """Model C placeholder — always True for now."""
         return True
+
+    def tilt_qms_to_deg(self, qms):
+        """Servo 2 QMS → degrees from vertical. 4000=17°, 7100=90°."""
+        return S2_REF_DEG + (qms - S2_REF_QMS) / S2_QMS_PER_DEG
+
+    def deg_to_s2_qms(self, deg):
+        """Degrees from vertical → servo 2 QMS, clamped to safe range."""
+        qms = S2_REF_QMS + int((deg - S2_REF_DEG) * S2_QMS_PER_DEG)
+        return max(4000, min(7100, qms))
 
     def aim(self, center_x, center_y, image_width, image_height):
         """
-        Map pixel positions to Maestro targets for Servos 1 (Pan) and 2 (Tilt).
         Iteratively center the plant in the frame.
+        Uses calibrated S2_QMS_PER_DEG for tilt so self.current_tilt
+        accurately reflects the physical servo 2 position after convergence.
         """
-        cx, cy = center_x, center_y
+        cx, cy    = center_x, center_y
         final_img = None
         final_pot = None
 
-        for _ in range(5):  # Max 5 iterations to center
-            # Horizontal / Pan (Servo 1)
-            normalized_x = (cx / image_width) - 0.5
-            angle_x = normalized_x * CAMERA_FOV
-
-            # Vertical / Tilt (Servo 2)
+        for _ in range(5):
+            normalized_x = (cx / image_width)  - 0.5
             normalized_y = (cy / image_height) - 0.5
+            angle_x = normalized_x * CAMERA_FOV
             angle_y = normalized_y * CAMERA_FOV_V
 
             if abs(normalized_x) < 0.05 and abs(normalized_y) < 0.05:
@@ -172,254 +153,212 @@ class DIHRobot:
 
             print(f"  Target requires a horizontal shift of {angle_x:.1f}° and vertical shift of {angle_y:.1f}°.")
 
-            # update corrections (flipped sign for tilt to look down correctly)
-            target_1_qms = self.current_pan  - int(angle_x * 25.0)
+            # Pan: 25 qms/deg is correct for servo 1
+            target_1_qms = self.current_pan - int(angle_x * 25.0)
+            # Tilt: use calibrated factor so self.current_tilt stays accurate
             target_2_qms = self.current_tilt + int(angle_y * S2_QMS_PER_DEG)
 
-            target_1_qms = max(0, min(16000, target_1_qms))
-            target_2_qms = max(0, min(16000, target_2_qms))
+            target_1_qms = max(0,    min(16000, target_1_qms))
+            target_2_qms = max(4000, min(7100,  target_2_qms))
 
             self.set_target(1, target_1_qms)
             self.set_target(2, target_2_qms)
-            self.current_pan = target_1_qms
+            self.current_pan  = target_1_qms
             self.current_tilt = target_2_qms
 
             time.sleep(1.0)
 
-            # Recapture and get new center
-            img = self.capture_image()
+            img  = self.capture_image()
             pots = self.detect_pots(img)
 
             cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
             cv2.putText(cv_img, "Aiming...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
-
             for pot in pots:
                 x1, y1, x2, y2 = pot["bbox"]
                 cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
                 cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
-
             cv2.imshow("Live Feed", cv_img)
             cv2.waitKey(1)
 
             if not pots:
                 break
 
-            # Find the pot closest to the center of the image
-            closest = min(pots, key=lambda p: abs(p["center_x"]/image_width - 0.5) + abs(p["center_y"]/image_height - 0.5))
-            cx, cy = closest["center_x"], closest["center_y"]
+            closest   = min(pots, key=lambda p: abs(p["center_x"]/image_width - 0.5) + abs(p["center_y"]/image_height - 0.5))
+            cx, cy    = closest["center_x"], closest["center_y"]
             final_img = img
             final_pot = closest
 
         return final_img, final_pot
 
-    def tilt_qms_to_deg(self, qms):
-        """Convert servo 2 QMS to physical angle in degrees (0=vertical, 90=horizontal)."""
-        return S2_REF_DEG + (qms - S2_REF_QMS) / S2_QMS_PER_DEG
-
-    def deg_to_s0_qms(self, deg):
-        """Convert desired angle to servo 0 QMS. Clamp to physical limits."""
-        qms = S0_REF_QMS - int((deg - S0_REF_DEG) * S0_QMS_PER_DEG)
-        return max(4400, min(8000, qms))
-
-    def deg_to_s2_qms(self, deg):
-        """Convert desired angle to servo 2 QMS. Clamp to physical limits."""
-        qms = S2_REF_QMS + int((deg - S2_REF_DEG) * S2_QMS_PER_DEG)
-        return max(4000, min(7100, qms))
-
     def compute_bow(self):
-        # self.current_tilt is the QMS value aim() last wrote to servo 2
-        current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
+        """
+        Calculate servo positions to point the hose at the plant.
 
-        # Sanity clamp — if aim() overshot the calibration range, cap it
-        current_angle_deg = max(17.0, min(90.0, current_angle_deg))
+        After aim() converges, self.current_tilt is the QMS value that had the
+        camera centred on the plant. The hose exits parallel to the top arm and
+        points 90° away from the camera direction, so we add 90° to that angle.
+
+        Servo 0 leans the whole assembly forward for distant plants; servo 2
+        compensates so the absolute hose angle stays correct regardless of how
+        much servo 0 moves.
+        """
+        current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
+        current_angle_deg = max(S2_REF_DEG, min(90.0, current_angle_deg))  # clamp to calibrated range
 
         bow_angle_deg = current_angle_deg + 90.0
 
-        tilt_rad = math.radians(current_angle_deg)
+        tilt_rad    = math.radians(current_angle_deg)
         distance_cm = CAMERA_HEIGHT_CM / math.tan(tilt_rad) if tilt_rad > 0 else 999
 
-        print(f"  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
+        print(f"  self.current_tilt={self.current_tilt}  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
         print(f"  Estimated plant distance: {distance_cm:.1f} cm")
-        print(f"  self.current_tilt QMS = {self.current_tilt}")
 
+        # Servo 0: two modes only
         if distance_cm < 30:
-            s0_bow = 8000
+            s0_bow      = 8000
             s0_lean_deg = 0.0
         else:
-            s0_bow = 5000
+            s0_bow      = 5000
             s0_lean_deg = (8000 - 5000) / S0_QMS_PER_DEG  # ~73.7°
 
-        HOSE_HEIGHT_CM = 5.0
+        # Arc correction: tip hose slightly further down so the water arc
+        # lands on the plant rather than overshooting it
         arc_correction_deg = math.degrees(math.atan2(HOSE_HEIGHT_CM, distance_cm))
 
-        # Servo 2 target is relative to its own zero, compensating for servo 0 lean
+        # Servo 2 works in its own frame (relative to servo 0's arm).
+        # Subtract servo 0's lean so the absolute angle stays at bow_angle_deg,
+        # then add arc correction to angle the water stream down onto the plant.
         s2_target_deg = bow_angle_deg - s0_lean_deg + arc_correction_deg
-        s2_bow = self.deg_to_s2_qms(s2_target_deg)
+        s2_bow        = self.deg_to_s2_qms(s2_target_deg)
 
-        print(f"  S0 lean: {s0_lean_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°")
-        print(f"  S2 target: {s2_target_deg:.1f}°  →  s2_bow={s2_bow}  s0_bow={s0_bow}")
+        print(f"  S0 lean: {s0_lean_deg:.1f}°  Arc correction: {arc_correction_deg:.1f}°  S2 target: {s2_target_deg:.1f}°")
+        print(f"  →  s0_bow={s0_bow}  s2_bow={s2_bow}")
 
         return s0_bow, s2_bow
+
+    def _return_to_scan(self, pan_pos, tilt_pos, frames=15):
+        """Move back to scan position with a live 'Returning' overlay."""
+        print("  Returning to scan position for next plant...")
+        self.set_target(1, pan_pos)
+        self.set_target(2, tilt_pos)
+        self.current_pan  = pan_pos
+        self.current_tilt = tilt_pos
+        for _ in range(frames):
+            img    = self.capture_image()
+            cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            cv2.putText(cv_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.imshow("Live Feed", cv_img)
+            cv2.waitKey(100)
 
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
-        # Sweep forward and backward
         forward_steps = list(range(4000, 7501, 100))
-
         recent_plants = []  # list of (centred_pan, timestamp)
 
         while True:
             for i, tilt_pos in enumerate(TILT_STEPS):
                 print(f"\n=== Scanning at tilt position {tilt_pos} ===")
-                
-                # Alternate direction per tilt level (zigzag)
                 current_pan_steps = forward_steps if i % 2 == 0 else list(reversed(forward_steps))
-                
+
                 for pan_pos in current_pan_steps:
                     print(f"\n--- Scanning at pan {pan_pos}, tilt {tilt_pos} ---")
                     self.set_target(1, pan_pos)
                     self.set_target(2, tilt_pos)
-                    self.current_pan = pan_pos
+                    self.current_pan  = pan_pos
                     self.current_tilt = tilt_pos
 
                     time.sleep(0.1)
 
-                    image = self.capture_image()
-                    cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-
-                    image_width = image.size[0]
+                    image        = self.capture_image()
+                    cv_img       = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                    image_width  = image.size[0]
                     image_height = image.size[1]
 
                     pots = self.detect_pots(image)
 
-                    # Draw all Model A bounding boxes early so we see them immediately
                     for pot in pots:
                         x1, y1, x2, y2 = pot["bbox"]
                         cv2.rectangle(cv_img, (x1, y1), (x2, y2), (0, 0, 128), 2)
                         cv2.putText(cv_img, "Pot", (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 128), 2)
-
                     cv2.imshow("Live Feed", cv_img)
                     cv2.waitKey(1)
 
                     if not pots:
                         print("No plants detected — moving on.")
-                    else:
-                        print(f"Detected {len(pots)} pot(s).")
-                        for i, pot in enumerate(pots):
-                            # Estimate the absolute pan that would centre this pot.
-                            # Used only to decide whether we've already handled it.
-                            normalized_x = (pot["center_x"] / image_width) - 0.5
-                            angle_x = normalized_x * CAMERA_FOV
-                            estimated_pan = self.current_pan - int(angle_x * 25.0)
+                        continue
 
-                            if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
-                                print(f"  [Plant {i+1}] Already handled — skipping.")
-                                continue
+                    print(f"Detected {len(pots)} pot(s).")
+                    for j, pot in enumerate(pots):
+                        normalized_x  = (pot["center_x"] / image_width) - 0.5
+                        angle_x       = normalized_x * CAMERA_FOV
+                        estimated_pan = self.current_pan - int(angle_x * 25.0)
 
-                            print(f"\n[Plant {i + 1}/{len(pots)}]")
+                        if any(abs(estimated_pan - p[0]) < DEDUP_THRESHOLD for p in recent_plants):
+                            print(f"  [Plant {j+1}] Already handled — skipping.")
+                            continue
 
-                            # Aim and center this pot first
-                            centered_img, centered_pot = self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
+                        print(f"\n[Plant {j+1}/{len(pots)}]")
 
-                            if centered_pot is None:
-                                print("  Lost plant during aiming.")
-                                self.set_target(1, pan_pos)
-                                self.set_target(2, tilt_pos)
-                                self.current_pan = pan_pos
-                                self.current_tilt = tilt_pos
-                                continue
+                        centered_img, centered_pot = self.aim(pot["center_x"], pot["center_y"], image_width, image_height)
 
-                            x1, y1, x2, y2 = centered_pot["bbox"]
+                        if centered_pot is None:
+                            print("  Lost plant during aiming — returning to scan position.")
+                            self._return_to_scan(pan_pos, tilt_pos)
+                            continue
 
-                            # Expand crop slightly to give Model B better context
-                            padding = 20
-                            crop = centered_img.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
+                        x1, y1, x2, y2 = centered_pot["bbox"]
+                        padding = 20
+                        crop    = centered_img.crop((x1 - padding, y1 - padding, x2 + padding, y2 + padding))
 
-                            name, conf = self.identify_plant(crop)
-                            print(f"  Species: {name} ({conf * 100:.1f}%)")
+                        name, conf = self.identify_plant(crop)
+                        print(f"  Species: {name} ({conf * 100:.1f}%)")
 
-                            # We need to take a fresh feed frame and write the result on it
-                            display_img = self.capture_image()
-                            cv_display_img = cv2.cvtColor(np.array(display_img), cv2.COLOR_RGB2BGR)
+                        display_img    = self.capture_image()
+                        cv_display_img = cv2.cvtColor(np.array(display_img), cv2.COLOR_RGB2BGR)
 
-                            if conf < 0.2:
-                                print("  Confidence too low (<20%) — skipping.")
-                                cv2.putText(cv_display_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                                cv2.imshow("Live Feed", cv_display_img)
-                                cv2.waitKey(1)
-                                # Returning to scan position
-                                print("  Returning to scan position for next plant...")
-                                self.set_target(1, pan_pos)
-                                self.set_target(2, tilt_pos)
-                                self.current_pan = pan_pos
-                                self.current_tilt = tilt_pos
-                                time.sleep(1.5)
-                                continue
-
-                            cv2.putText(cv_display_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        if conf < 0.2:
+                            print("  Confidence too low (<20%) — skipping.")
+                            cv2.putText(cv_display_img, f"{name} {conf*100:.1f}% (LOW)", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                             cv2.imshow("Live Feed", cv_display_img)
                             cv2.waitKey(1)
+                            self._return_to_scan(pan_pos, tilt_pos)
+                            continue
 
-                            if self.needs_water(crop, name):
-                                recent_plants.append((self.current_pan, time.time()))
+                        cv2.putText(cv_display_img, f"{name} {conf*100:.1f}%", (x1, max(40, y1+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.imshow("Live Feed", cv_display_img)
+                        cv2.waitKey(1)
 
-                                print("  Bowing down to water...")
+                        if self.needs_water(crop, name):
+                            recent_plants.append((self.current_pan, time.time()))
 
-                                # Adjust bow position if the plant is closer (higher tilt value)
-                                s0_bow, s2_bow = self.compute_bow()
-                                self.set_target(0, s0_bow)
-                                self.set_target(2, s2_bow)
-                                time.sleep(1.5)
+                            print("  Bowing down to water...")
+                            s0_bow, s2_bow = self.compute_bow()
+                            self.set_target(0, s0_bow)
+                            self.set_target(2, s2_bow)
+                            time.sleep(1.5)
 
-                                print("  *Pretending to water*")
-                                for _ in range(100):
-                                    w_img = self.capture_image()
-                                    cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
-                                    cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                                                (255, 255, 0), 2)
-                                    cv2.imshow("Live Feed", cv_w_img)
-                                    cv2.waitKey(100)
+                            print("  *Pretending to water*")
+                            for _ in range(100):
+                                w_img    = self.capture_image()
+                                cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
+                                cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                                cv2.imshow("Live Feed", cv_w_img)
+                                cv2.waitKey(100)
 
-                                print("  Returning to upright position...")
-                                self.set_target(0, SERVO_0_VERTICAL_POS)
-
-                                print("  Returning to scan position for next plant...")
-                                self.set_target(1, pan_pos)
-                                self.set_target(2, tilt_pos)
-                                self.current_pan = pan_pos
-                                self.current_tilt = tilt_pos
-                                for _ in range(15):
-                                    ret_img = self.capture_image()
-                                    cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
-                                    cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                    cv2.imshow("Live Feed", cv_ret_img)
-                                    cv2.waitKey(100)
-                            else:
-                                print("  Doesn't need water — skipping.")
-                                # Store the estimate so we don't re-identify it either
-                                recent_plants.append((estimated_pan, time.time()))
-                                # Returning to scan position
-                                print("  Returning to scan position for next plant...")
-                                self.set_target(1, pan_pos)
-                                self.set_target(2, tilt_pos)
-                                self.current_pan = pan_pos
-                                self.current_tilt = tilt_pos
-                                for _ in range(15):
-                                    ret_img = self.capture_image()
-                                    cv_ret_img = cv2.cvtColor(np.array(ret_img), cv2.COLOR_RGB2BGR)
-                                    cv2.putText(cv_ret_img, "Returning...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                    cv2.imshow("Live Feed", cv_ret_img)
-                                    cv2.waitKey(100)
-
-        # The loop runs indefinitely until KeyboardInterrupt
+                            print("  Returning to upright position...")
+                            self.set_target(0, SERVO_0_VERTICAL_POS)
+                            self._return_to_scan(pan_pos, tilt_pos)
+                        else:
+                            print("  Doesn't need water — skipping.")
+                            recent_plants.append((estimated_pan, time.time()))
+                            self._return_to_scan(pan_pos, tilt_pos)
 
         print("\nResetting arm to homed position.")
         self.set_target(0, SERVO_0_VERTICAL_POS)
         self.set_target(1, 6000)
         self.set_target(2, SERVO_2_VERTICAL_POS)
         time.sleep(1.0)
-
         self.cleanup()
         print("=== Cycle complete — sleeping. ===\n")
 
