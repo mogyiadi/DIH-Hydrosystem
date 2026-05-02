@@ -1,53 +1,92 @@
-import time
+"""
+Servo calibration helper.
+Controls servo 0 and servo 2 interactively so you can measure
+the physical angle at known QMS values.
+
+Keys:
+  W / S  — servo 0 up / down  (large step)
+  w / s  — servo 0 up / down  (small step)
+  I / K  — servo 2 up / down  (large step)
+  i / k  — servo 2 up / down  (small step)
+  0      — send both servos to their VERTICAL constants
+  space  — print current values (copy these into your notes)
+  q      — quit
+"""
+
+import sys
+import termios
+import tty
 import serial
+import time
 
-# --- Configuration ---
-CHANNEL = 2  # Changed to Tilt servo (was 1 for pan)
-PORT = '/dev/ttyACM0'
-BAUD_RATE = 9600
+SERVO_0_VERTICAL_POS = 8000
+SERVO_2_VERTICAL_POS = 4000
 
-print("Connecting to Maestro controller...")
-try:
-    port = serial.Serial(PORT, BAUD_RATE, timeout=1)
-    print("Connected to controller!")
-except Exception as e:
-    print(f"Could not connect to serial port. Error: {e}")
-    exit()
+LARGE_STEP = 500   # ~a few degrees, adjust if needed
+SMALL_STEP = 100   # fine tune
 
+def set_target(port, channel, target):
+    target = max(0, min(16000, target))
+    lsb = target & 0x7F
+    msb = (target >> 7) & 0x7F
+    port.write(bytes([0x84, channel, lsb, msb]))
+    return target
 
-def set_target_us(channel, target_us):
-    """
-    Sends target to Maestro using standard microseconds (500 to 2500).
-    Automatically converts to Maestro's required quarter-microseconds.
-    """
-    # Convert microseconds to quarter-microseconds
-    target_qms = int(target_us * 4)
+def getch():
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
-    lsb = target_qms & 0x7F
-    msb = (target_qms >> 7) & 0x7F
-    cmd = bytes([0x84, channel, lsb, msb])
-    port.write(cmd)
+def main():
+    print("Connecting...")
+    port = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+    time.sleep(0.5)
 
-    print(f"Sent {target_us} µs (Maestro target: {target_qms}) to Channel {channel}")
+    s0 = SERVO_0_VERTICAL_POS
+    s2 = SERVO_2_VERTICAL_POS
 
+    set_target(port, 0, s0)
+    set_target(port, 2, s2)
+    time.sleep(1.0)
 
-print(f"\n=== Setting Servos to Straight Position ===")
+    print(f"Starting at  Servo0={s0}  Servo2={s2}")
+    print(__doc__)
 
-try:
-    print("\n--- Moving Channel 0 to Straight Position (1500 µs) ---")
-    set_target_us(0, 100)
-    time.sleep(1)
-
-    print("\n--- Moving Channel 2 to Straight Position (1500 µs) ---")
-    set_target_us(2, 100)
-
-    print("\nPositions set. Holding... Press Ctrl+C to stop.")
     while True:
-        time.sleep(1)
+        ch = getch()
 
-except KeyboardInterrupt:
-    print("\nInterrupted! Leaving servos in straight position and cleaning up...")
-    time.sleep(1)
+        if ch == 'q':
+            print("\nDone.")
+            break
+        elif ch == 'W':
+            s0 = set_target(port, 0, s0 + LARGE_STEP)
+        elif ch == 'S':
+            s0 = set_target(port, 0, s0 - LARGE_STEP)
+        elif ch == 'w':
+            s0 = set_target(port, 0, s0 + SMALL_STEP)
+        elif ch == 's':
+            s0 = set_target(port, 0, s0 - SMALL_STEP)
+        elif ch == 'I':
+            s2 = set_target(port, 2, s2 + LARGE_STEP)
+        elif ch == 'K':
+            s2 = set_target(port, 2, s2 - LARGE_STEP)
+        elif ch == 'i':
+            s2 = set_target(port, 2, s2 + SMALL_STEP)
+        elif ch == 'k':
+            s2 = set_target(port, 2, s2 - SMALL_STEP)
+        elif ch == '0':
+            s0 = set_target(port, 0, SERVO_0_VERTICAL_POS)
+            s2 = set_target(port, 2, SERVO_2_VERTICAL_POS)
+        elif ch == ' ':
+            pass  # just print below
+
+        print(f"  Servo0={s0}  Servo2={s2}")
+
     port.close()
-    print("Port closed.")
 
+if __name__ == "__main__":
+    main()
