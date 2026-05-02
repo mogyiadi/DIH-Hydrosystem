@@ -5,6 +5,7 @@ import cv2
 from PIL import Image
 from ultralytics import YOLO
 from picamera2 import Picamera2
+import math
 
 try:
     from ai_edge_litert.interpreter import Interpreter
@@ -39,6 +40,14 @@ SERVO_2_BOW_POS = 4000
 # Tilt levels for scanning to capture both near and far plants
 TILT_STEPS = [4000, 5000, 6000]
 
+CAMERA_HEIGHT_CM = 38.0
+
+# Calibrated conversions
+S0_REF_QMS, S0_REF_DEG = 8000, 2.0
+S0_QMS_PER_DEG = 40.7  # increasing QMS = more vertical
+
+S2_REF_QMS, S2_REF_DEG = 4000, 17.0
+S2_QMS_PER_DEG = 42.5  # increasing QMS = more horizontal
 
 class DIHRobot:
 
@@ -203,6 +212,51 @@ class DIHRobot:
 
         return final_img, final_pot
 
+    def tilt_qms_to_deg(self, qms):
+        """Convert servo 2 QMS to physical angle in degrees (0=vertical, 90=horizontal)."""
+        return S2_REF_DEG + (qms - S2_REF_QMS) / S2_QMS_PER_DEG
+
+    def deg_to_s0_qms(self, deg):
+        """Convert desired angle to servo 0 QMS. Clamp to physical limits."""
+        qms = S0_REF_QMS - int((deg - S0_REF_DEG) * S0_QMS_PER_DEG)
+        return max(4400, min(8000, qms))
+
+    def deg_to_s2_qms(self, deg):
+        """Convert desired angle to servo 2 QMS. Clamp to physical limits."""
+        qms = S2_REF_QMS + int((deg - S2_REF_DEG) * S2_QMS_PER_DEG)
+        return max(4000, min(7100, qms))
+
+    def compute_bow(self):
+        """
+        The camera is centered on the plant at self.current_tilt.
+        The hose points 90° away from the camera, so we add 90° to the
+        current tilt angle to get the bow position.
+
+        We also use trig to estimate distance and nudge servo 0 forward
+        so the hose tip moves closer to the plant if needed.
+        """
+        current_angle_deg = self.tilt_qms_to_deg(self.current_tilt)
+        bow_angle_deg = current_angle_deg + 90.0
+
+        # Distance estimate — used to offset servo 0
+        tilt_rad = math.radians(current_angle_deg)
+        distance_cm = CAMERA_HEIGHT_CM / math.tan(tilt_rad) if tilt_rad > 0 else 999
+
+        print(f"  Camera tilt: {current_angle_deg:.1f}°  →  bow angle: {bow_angle_deg:.1f}°")
+        print(f"  Estimated plant distance: {distance_cm:.1f} cm")
+
+        s2_bow = self.deg_to_s2_qms(bow_angle_deg)
+
+        # Servo 0: lean forward proportionally to distance.
+        # At 60 cm+ keep it vertical (8000). At 20 cm lean forward to ~60°.
+        # Adjust the breakpoints after physical testing.
+        s0_bow = int(np.interp(distance_cm,
+                               [20, 40, 60],  # distance breakpoints (cm)
+                               [5800, 7000, 8000]))  # servo 0 QMS (more = more vertical)
+        s0_bow = max(4400, min(8000, s0_bow))
+
+        return s0_bow, s2_bow
+
     def run_cycle(self):
         print("=== DIH cycle start ===")
 
@@ -307,25 +361,19 @@ class DIHRobot:
                                 recent_plants.append((self.current_pan, time.time()))
 
                                 print("  Bowing down to water...")
-                                
-                                # Adjust bow position if the plant is closer (higher tilt value)
-                                adjusted_servo_0_bow = SERVO_0_BOW_POS
-                                adjusted_servo_2_bow = SERVO_2_BOW_POS
-                                if self.current_tilt > 4500:
-                                    # For close plants, keep base (servo 0) vertical to avoid crushing the plant
-                                    adjusted_servo_0_bow = SERVO_0_VERTICAL_POS
-                                    tilt_diff = self.current_tilt - 2000
-                                    adjusted_servo_2_bow += int(tilt_diff * 0.5)
 
-                                self.set_target(0, adjusted_servo_0_bow)
-                                self.set_target(2, adjusted_servo_2_bow)
+                                # Adjust bow position if the plant is closer (higher tilt value)
+                                s0_bow, s2_bow = self.compute_bow()
+                                self.set_target(0, s0_bow)
+                                self.set_target(2, s2_bow)
                                 time.sleep(1.5)
 
                                 print("  *Pretending to water*")
                                 for _ in range(100):
                                     w_img = self.capture_image()
                                     cv_w_img = cv2.cvtColor(np.array(w_img), cv2.COLOR_RGB2BGR)
-                                    cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                                    cv2.putText(cv_w_img, "Watering...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                                                (255, 255, 0), 2)
                                     cv2.imshow("Live Feed", cv_w_img)
                                     cv2.waitKey(100)
 
