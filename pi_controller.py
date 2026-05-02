@@ -40,7 +40,7 @@ SERVO_2_BOW_POS = 4000
 # Tilt levels for scanning to capture both near and far plants
 TILT_STEPS = [4000, 5000, 6000]
 
-CAMERA_HEIGHT_CM = 38.0
+CAMERA_HEIGHT_CM = 22.7
 
 # Calibrated conversions
 S0_REF_QMS, S0_REF_DEG = 8000, 2.0
@@ -247,12 +247,11 @@ class DIHRobot:
 
         s2_bow = self.deg_to_s2_qms(bow_angle_deg)
 
-        # Servo 0: lean forward proportionally to distance.
-        # At 60 cm+ keep it vertical (8000). At 20 cm lean forward to ~60°.
-        # Adjust the breakpoints after physical testing.
+        # Distance → servo 0: at ≤35 cm stay fully vertical (don't crush plant),
+        # lean progressively forward for farther plants.
         s0_bow = int(np.interp(distance_cm,
-                               [20, 40, 60],  # distance breakpoints (cm)
-                               [5800, 7000, 8000]))  # servo 0 QMS (more = more vertical)
+                               [35, 50, 70, 90],
+                               [8000, 7000, 5800, 5000]))
         s0_bow = max(4400, min(8000, s0_bow))
 
         return s0_bow, s2_bow
