@@ -1,4 +1,3 @@
-import time
 import serial
 import numpy as np
 import cv2
@@ -6,6 +5,9 @@ from PIL import Image
 from ultralytics import YOLO
 from picamera2 import Picamera2
 import math
+import time
+import json
+import os
 
 try:
     from ai_edge_litert.interpreter import Interpreter
@@ -71,6 +73,18 @@ class DIHRobot:
         with open(CLASS_NAMES_PATH) as f:
             self.class_names = [l.strip() for l in f]
 
+        self.memory_file = "plant_memory.json"
+        self.plant_watering_history = {}
+
+        # Load previous memory if the file exists
+        if os.path.exists(self.memory_file):
+            try:
+                with open(self.memory_file, 'r') as f:
+                    self.plant_watering_history = json.load(f)
+                print(f"Loaded watering history for {len(self.plant_watering_history)} plants.")
+            except Exception as e:
+                print(f"Could not load memory file: {e}")
+
         print("Warming up camera natively with Picamera2...")
         self.picam2 = Picamera2()
         config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
@@ -121,7 +135,56 @@ class DIHRobot:
         return self.class_names[idx], float(out[idx])
 
     def needs_water(self, crop, plant_class):
-        return True
+        """
+        Determines if a plant needs water based on its class and the time
+        since it was last watered, using its physical location as a unique ID.
+        """
+
+        # Define optimal watering schedules (in days) for your 4 exact classes
+        schedules_in_days = {
+            "cacti": 21,
+            "standard_houseplant": 10,
+            "bloomer": 7,
+            "moisture_loving": 5
+        }
+
+        # Normalize the class name from the model to match our dictionary keys
+        # (e.g., "Moisture Loving" becomes "moisture_loving")
+        normalized_class = plant_class.lower().replace(" ", "_")
+
+        # Get the schedule, fallback to 7 days just in case the model outputs something unexpected
+        interval_days = schedules_in_days.get(normalized_class, 7)
+        interval_seconds = interval_days * 24 * 60 * 60
+
+        # Create a unique Plant ID based on its location
+        # We round the pan and distance so minor servo jitter doesn't create a "new" plant
+        distance = self.estimate_distance()
+        pan_rounded = round(self.current_pan, -2)  # Round to nearest 100 QMS
+        dist_rounded = round(distance, 0)  # Round to nearest cm
+
+        plant_id = f"{normalized_class}_{pan_rounded}_{dist_rounded}"
+
+        # Check the watering history
+        current_time = time.time()
+        last_watered_time = self.plant_watering_history.get(plant_id, 0)
+        time_since_watered = current_time - last_watered_time
+
+        if time_since_watered >= interval_seconds:
+            print(f"  [{plant_class} @ {dist_rounded}cm] Needs water! (Schedule: every {interval_days} days)")
+
+            # Update the dictionary
+            self.plant_watering_history[plant_id] = current_time
+
+            # SAVE to the file so it survives a reboot!
+            with open(self.memory_file, 'w') as f:
+                json.dump(self.plant_watering_history, f)
+
+            return True
+        else:
+            days_left = round((interval_seconds - time_since_watered) / 86400, 1)
+            print(f"  [{plant_class} @ {dist_rounded}cm] Fine for now. Check back in {days_left} days.")
+            return False
+
 
     def tilt_qms_to_deg(self, qms):
         """Servo 2 QMS → degrees from vertical. 4000=17°, 7100=90°."""
@@ -269,6 +332,10 @@ class DIHRobot:
         recent_plants = []  # list of (centred_pan, distance, timestamp)
 
         while True:
+            recent_plants = []
+            print("Starting a new full-room sweep")
+
+
             for i, tilt_pos in enumerate(TILT_STEPS):
                 print(f"\n=== Scanning at tilt position {tilt_pos} ===")
                 current_pan_steps = forward_steps if i % 2 == 0 else list(reversed(forward_steps))
@@ -390,13 +457,15 @@ class DIHRobot:
                             recent_plants.append((estimated_pan, estimated_dist, time.time()))
                             self._return_to_scan(pan_pos, tilt_pos)
 
-        print("\nResetting arm to homed position.")
-        self.set_target(0, SERVO_0_VERTICAL_POS)
-        self.set_target(1, 6000)
-        self.set_target(2, SERVO_2_VERTICAL_POS)
-        time.sleep(1.0)
-        self.cleanup()
-        print("=== Cycle complete — sleeping. ===\n")
+            print("\nResetting arm to homed position.")
+            self.set_target(0, SERVO_0_VERTICAL_POS)
+            self.set_target(1, 6000)
+            self.set_target(2, SERVO_2_VERTICAL_POS)
+            # time.sleep(1.0)
+            # self.cleanup()
+
+            print("=== Cycle complete — sleeping. ===\n")
+            time.sleep(21600) # sleep for 6 hours
 
     def cleanup(self):
         cv2.destroyAllWindows()
