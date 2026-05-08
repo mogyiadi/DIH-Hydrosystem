@@ -404,8 +404,8 @@ class DIHRobot:
                             self._return_to_scan(pan_pos, tilt_pos)
                             continue
 
-                        if distance_cm > 40:
-                            print(f"  Plant too far ({distance_cm:.1f} cm > 40cm) — skipping.")
+                        if distance_cm > 35:
+                            print(f"  Plant too far ({distance_cm:.1f} cm > 35cm) — skipping.")
                             recent_plants.append((self.current_pan, distance_cm, time.time()))
                             self._return_to_scan(pan_pos, tilt_pos)
                             continue
