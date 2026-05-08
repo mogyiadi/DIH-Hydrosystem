@@ -1,95 +1,36 @@
-"""
-Pump control script.
-Controls a water pump via MOSFET on GPIO pin 17.
+from gpiozero import OutputDevice
+from time import sleep
 
-Keys:
-  SPACE  — pump on, press any key to stop
-  p      — pulse: run pump for set duration then stop automatically
-  +      — increase pulse duration by 0.5s
-  -      — decrease pulse duration by 0.5s
-  q      — quit
-"""
+# Define the GPIO pin your MOSFET SIG is connected to
+PUMP_PIN = 17
 
-import sys
-import termios
-import tty
-import time
-import RPi.GPIO as GPIO
+# Initialize the pump
+# active_high=True means sending power (3.3V) turns the MOSFET on
+# initial_value=False ensures the pump stays OFF when the script starts
+pump = OutputDevice(PUMP_PIN, active_high=True, initial_value=False)
 
-PUMP_PIN       = 17
-PULSE_DURATION = 2.0  # seconds, adjustable with +/-
+print("Starting water pump test...")
 
+try:
+    # 1. Turn the pump ON
+    print("Pump is ON. Pumping water...")
+    pump.on()
 
-def setup():
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(PUMP_PIN, GPIO.OUT, initial=GPIO.LOW)
-    print(f"Pump ready on GPIO {PUMP_PIN}.")
+    # Let it run for 3 seconds
+    sleep(3)
 
+    # 2. Turn the pump OFF
+    print("Pump is OFF.")
+    pump.off()
 
-def pump_on():
-    GPIO.output(PUMP_PIN, GPIO.HIGH)
+    print("Test complete!")
 
+except KeyboardInterrupt:
+    # This catches the event if you press Ctrl+C to manually stop the script
+    print("\nTest interrupted by user.")
 
-def pump_off():
-    GPIO.output(PUMP_PIN, GPIO.LOW)
-
-
-def cleanup():
-    pump_off()
-    GPIO.cleanup()
-    print("GPIO cleaned up.")
-
-
-def getch():
-    fd  = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        return sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
-def main():
-    global PULSE_DURATION
-    setup()
-
-    print(__doc__)
-    print(f"Pulse duration: {PULSE_DURATION:.1f}s\n")
-
-    try:
-        while True:
-            ch = getch()
-
-            if ch == 'q':
-                print("\nQuitting.")
-                break
-
-            elif ch == ' ':
-                print("  Pump ON — press any key to stop...", end="", flush=True)
-                pump_on()
-                getch()  # block until next keypress
-                pump_off()
-                print("  OFF")
-
-            elif ch == 'p':
-                print(f"  Pulsing for {PULSE_DURATION:.1f}s...")
-                pump_on()
-                time.sleep(PULSE_DURATION)
-                pump_off()
-                print("  Done.")
-
-            elif ch == '+':
-                PULSE_DURATION = round(PULSE_DURATION + 0.5, 1)
-                print(f"  Pulse duration: {PULSE_DURATION:.1f}s")
-
-            elif ch == '-':
-                PULSE_DURATION = max(0.5, round(PULSE_DURATION - 0.5, 1))
-                print(f"  Pulse duration: {PULSE_DURATION:.1f}s")
-
-    finally:
-        cleanup()
-
-
-if __name__ == "__main__":
-    main()
+finally:
+    # SAFETY NET: This block always runs when the script ends or crashes.
+    # It ensures you don't accidentally leave the pump running forever!
+    print("Cleaning up: Ensuring pump is turned off.")
+    pump.off()
